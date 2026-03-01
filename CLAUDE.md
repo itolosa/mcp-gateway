@@ -48,6 +48,7 @@ Build target is `/tmp/mcp-gateway-target` (set in `.cargo/config.toml`).
 
 - **Task loop**: Always check `prd.json` for the highest-priority unblocked pending milestone. Implement it, update `progress.txt` with the completion note, mark the milestone as `"completed"` in `prd.json`, commit, then repeat with the next milestone.
 - **Commit after every win**: Always commit after each significant progress (milestone complete, quality gates passing, major refactor done). Small frequent commits let us roll back safely.
+- **Quality gates before commit**: Always run and pass ALL quality gates (fmt, clippy, 100% coverage, 100% mutation coverage) before committing a completed milestone. Never commit with failing gates.
 - Spawn multiple agents in parallel for wide research tasks
 - Incremental approach: build by milestones, verify each before moving on
 - All config files are JSON
