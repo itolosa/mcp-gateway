@@ -44,6 +44,8 @@ Build target is `/tmp/mcp-gateway-target` (set in `.cargo/config.toml`).
 
 **Boy Scout Rule** - Leave the place better than we found it. No leftover files, no garbage. If something is generated/temporary, either `.gitignore` it or delete it. Clean as you go.
 
+**Don't reinvent the wheel** - Use established libraries for complex protocols (OAuth, HTTP, JSON-RPC). Focus our code on the gateway-specific logic, not reimplementing standards.
+
 ## Workflow Rules
 
 - **Task loop**: Always check `prd.json` for the highest-priority unblocked pending milestone. Implement it, update `progress.txt` with the completion note, mark the milestone as `"completed"` in `prd.json`, commit, then repeat with the next milestone.
