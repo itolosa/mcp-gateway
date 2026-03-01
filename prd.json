@@ -100,7 +100,7 @@
     {
       "id": 7,
       "title": "Integrate rmcp and async runtime",
-      "status": "pending",
+      "status": "completed",
       "description": "Add rmcp (official Anthropic MCP SDK) and tokio as dependencies. Make main() async. Create the proxy/ module skeleton with error types. Verify the project compiles and all existing tests still pass. This is the foundation for the proxy server.",
       "acceptance_criteria": [
         "rmcp and tokio added to Cargo.toml",

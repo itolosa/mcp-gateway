@@ -6,7 +6,8 @@ use mcp_gateway::config::default_config_path;
 use mcp_gateway::config::store::FileConfigStore;
 use mcp_gateway::registry::service::RegistryService;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     let config_path = cli.config.or_else(default_config_path).unwrap_or_default();

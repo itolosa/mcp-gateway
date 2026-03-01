@@ -16,6 +16,13 @@ M6: Full CLI lifecycle integration test - DONE
   - E2E test: add stdio (with env) -> list -> add http (with headers) -> list both -> verify config -> remove -> list remaining -> verify gone
   - 74 tests (62 unit + 12 integration), all quality gates pass
 
+M7: Integrate rmcp and async runtime - DONE
+  - Added rmcp 0.17 (client, server, transport-io, transport-child-process) and tokio 1 to Cargo.toml
+  - Made main() async with #[tokio::main]
+  - Created proxy/ module with error.rs (ProxyError: ServerNotFound, Config)
+  - 76 tests (64 unit + 12 integration), all quality gates pass
+  - 30 mutants tested: 26 caught, 4 unviable
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)
