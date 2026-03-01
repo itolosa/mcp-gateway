@@ -11,3 +11,7 @@ M5: Remove a registered MCP server - DONE
   - Added run_remove() to runner
   - 73 tests (62 unit + 11 integration), all quality gates pass
   - 30 mutants tested: 26 caught, 4 unviable
+
+M6: Full CLI lifecycle integration test - DONE
+  - E2E test: add stdio (with env) -> list -> add http (with headers) -> list both -> verify config -> remove -> list remaining -> verify gone
+  - 74 tests (62 unit + 12 integration), all quality gates pass

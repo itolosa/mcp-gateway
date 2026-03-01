@@ -86,7 +86,7 @@
     {
       "id": 6,
       "title": "Full CLI lifecycle integration test",
-      "status": "pending",
+      "status": "completed",
       "description": "End-to-end integration test covering the complete add -> list -> add another -> list both -> remove first -> list remaining lifecycle. Validates that all CLI commands work together correctly with a real config file.",
       "acceptance_criteria": [
         "Single integration test covers: add server A, list (shows A), add server B, list (shows A and B), remove A, list (shows only B)",

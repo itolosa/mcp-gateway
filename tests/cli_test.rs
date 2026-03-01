@@ -200,6 +200,95 @@ fn remove_existing_server_succeeds() {
 }
 
 #[test]
+fn full_lifecycle_add_list_remove() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("lifecycle.json");
+    let c = config_path.to_str().unwrap_or_default();
+
+    // Add stdio server with env vars
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            c,
+            "add",
+            "local",
+            "-t",
+            "stdio",
+            "--command",
+            "node",
+            "--args",
+            "server.js",
+            "--env",
+            "API_KEY=secret",
+        ])
+        .assert()
+        .success();
+
+    // List shows only local
+    cargo_bin_cmd!()
+        .args(["-c", c, "list"])
+        .assert()
+        .success()
+        .stdout(contains("local"))
+        .stdout(contains("stdio"))
+        .stdout(contains("node"));
+
+    // Add http server with headers
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            c,
+            "add",
+            "remote",
+            "-t",
+            "http",
+            "--url",
+            "https://api.example.com/mcp",
+            "--header",
+            "Authorization: Bearer tok",
+        ])
+        .assert()
+        .success();
+
+    // List shows both
+    let list_both = cargo_bin_cmd!().args(["-c", c, "list"]).assert().success();
+    list_both
+        .stdout(contains("local"))
+        .stdout(contains("remote"))
+        .stdout(contains("stdio"))
+        .stdout(contains("http"));
+
+    // Config file contains env vars and headers
+    let contents = std::fs::read_to_string(&config_path).unwrap_or_else(|_| unreachable!());
+    assert!(contents.contains("API_KEY"));
+    assert!(contents.contains("secret"));
+    assert!(contents.contains("Authorization"));
+    assert!(contents.contains("Bearer tok"));
+
+    // Remove local
+    cargo_bin_cmd!()
+        .args(["-c", c, "remove", "local"])
+        .assert()
+        .success();
+
+    // List shows only remote
+    cargo_bin_cmd!()
+        .args(["-c", c, "list"])
+        .assert()
+        .success()
+        .stdout(contains("remote"))
+        .stdout(contains("https://api.example.com/mcp"));
+
+    // Verify local is gone from list output
+    let final_list = cargo_bin_cmd!()
+        .args(["-c", c, "list"])
+        .output()
+        .unwrap_or_else(|_| unreachable!());
+    let stdout = String::from_utf8_lossy(&final_list.stdout);
+    assert!(!stdout.contains("local"));
+}
+
+#[test]
 fn remove_nonexistent_fails() {
     let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
     let config_path = dir.path().join("test-config.json");
