@@ -23,6 +23,17 @@ M7: Integrate rmcp and async runtime - DONE
   - 76 tests (64 unit + 12 integration), all quality gates pass
   - 30 mutants tested: 26 caught, 4 unviable
 
+M8: Proxy server - stdio upstream forwarding - DONE
+  - ProxyHandler implements ServerHandler: forwards list_tools/call_tool to upstream, returns gateway identity
+  - serve_proxy<T> generic over downstream transport (high controllability via DI)
+  - spawn_transport creates TokioChildProcess from StdioConfig
+  - run_run<S, F, Fut> accepts proxy runner strategy (compile-time DI, no dyn)
+  - Composition root (run_proxy logic) lives in main.rs, all lib code fully testable
+  - E2E test with in-memory upstream: full proxy pipeline (mock server <-> proxy <-> test client)
+  - service_error_to_mcp converts ServiceError to ErrorData for clean error forwarding
+  - 99 tests (87 unit + 12 integration), all quality gates pass
+  - 39 mutants tested: 32 caught, 7 unviable
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)

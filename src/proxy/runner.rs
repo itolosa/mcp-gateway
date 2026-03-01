@@ -1,0 +1,147 @@
+use rmcp::transport::child_process::TokioChildProcess;
+use rmcp::ServiceExt;
+
+use crate::config::model::StdioConfig;
+use crate::proxy::error::ProxyError;
+use crate::proxy::handler::ProxyHandler;
+
+pub async fn serve_proxy<T, E, A>(
+    upstream: rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    downstream_transport: T,
+) -> Result<(), ProxyError>
+where
+    T: rmcp::transport::IntoTransport<rmcp::RoleServer, E, A>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let proxy = ProxyHandler::new(upstream)?;
+    let service =
+        proxy
+            .serve(downstream_transport)
+            .await
+            .map_err(|e| ProxyError::DownstreamInit {
+                message: e.to_string(),
+            })?;
+    let _ = service.waiting().await;
+    Ok(())
+}
+
+pub fn spawn_transport(config: &StdioConfig) -> Result<TokioChildProcess, ProxyError> {
+    let mut cmd = tokio::process::Command::new(&config.command);
+    cmd.args(&config.args);
+    for (key, value) in &config.env {
+        cmd.env(key, value);
+    }
+    TokioChildProcess::new(cmd).map_err(|e| ProxyError::UpstreamSpawn { source: e })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use rmcp::model::*;
+    use rmcp::ServerHandler;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn spawn_transport_invalid_command_returns_error() {
+        let config = StdioConfig {
+            command: "/nonexistent/path/to/binary".to_string(),
+            args: vec![],
+            env: BTreeMap::new(),
+        };
+        let result = spawn_transport(&config);
+        assert!(matches!(result, Err(ProxyError::UpstreamSpawn { .. })));
+    }
+
+    #[tokio::test]
+    async fn spawn_transport_with_args_and_env() {
+        let config = StdioConfig {
+            command: "cat".to_string(),
+            args: vec!["--help".to_string()],
+            env: BTreeMap::from([("MY_VAR".to_string(), "value".to_string())]),
+        };
+        let result = spawn_transport(&config);
+        assert!(result.is_ok());
+    }
+
+    struct MinimalServer;
+
+    impl ServerHandler for MinimalServer {
+        fn get_info(&self) -> ServerInfo {
+            ServerInfo {
+                capabilities: ServerCapabilities::builder().enable_tools().build(),
+                ..Default::default()
+            }
+        }
+
+        async fn list_tools(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+        ) -> Result<ListToolsResult, rmcp::ErrorData> {
+            Ok(ListToolsResult {
+                tools: vec![],
+                next_cursor: None,
+                meta: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_proxy_downstream_init_error() {
+        let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);
+
+        // Start mock upstream server
+        let upstream_handle = tokio::spawn(async move {
+            let s = MinimalServer.serve(upstream_server_t).await.unwrap();
+            let _ = s.waiting().await;
+        });
+
+        // Connect upstream client
+        let upstream = ().serve(upstream_client_t).await.unwrap();
+
+        // Create a downstream transport that immediately closes
+        let (downstream_server_t, downstream_client_t) = tokio::io::duplex(4096);
+        drop(downstream_client_t); // Close immediately
+
+        let result = serve_proxy(upstream, downstream_server_t).await;
+        assert!(matches!(result, Err(ProxyError::DownstreamInit { .. })));
+
+        // Wait for upstream mock to shut down cleanly
+        let _ = upstream_handle.await;
+    }
+
+    #[tokio::test]
+    async fn serve_proxy_forwards_and_exits_on_disconnect() {
+        let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);
+        let (downstream_server_t, downstream_client_t) = tokio::io::duplex(4096);
+
+        // Start mock upstream server
+        let upstream_handle = tokio::spawn(async move {
+            let s = MinimalServer.serve(upstream_server_t).await.unwrap();
+            let _ = s.waiting().await;
+        });
+
+        // Connect upstream client
+        let upstream = ().serve(upstream_client_t).await.unwrap();
+
+        // Start proxy in background
+        let proxy_handle =
+            tokio::spawn(async move { serve_proxy(upstream, downstream_server_t).await });
+
+        // Connect downstream client, verify it works, then disconnect
+        let client = ().serve(downstream_client_t).await.unwrap();
+        let tools = client.list_tools(None).await.unwrap();
+        assert!(tools.tools.is_empty());
+
+        // Drop the client which closes the downstream transport
+        drop(client);
+
+        // Proxy should exit cleanly
+        let result = proxy_handle.await.unwrap();
+        assert!(result.is_ok());
+
+        // Wait for upstream mock to shut down cleanly
+        let _ = upstream_handle.await;
+    }
+}

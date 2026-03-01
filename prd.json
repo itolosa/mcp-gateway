@@ -113,7 +113,7 @@
     {
       "id": 8,
       "title": "Proxy server - stdio upstream forwarding",
-      "status": "pending",
+      "status": "completed",
       "description": "Implement the core proxy: an rmcp server (downstream, stdio transport) that forwards all MCP requests to a single upstream MCP server (also stdio, spawned as child process via rmcp client). The gateway reads config to know which upstream to connect to. 'mcp-gateway run <name>' starts the proxy for the named server.",
       "acceptance_criteria": [
         "Command::Run(RunArgs) added to CLI with server name argument",

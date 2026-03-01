@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::io::Write;
 
-use crate::cli::command::{AddArgs, RemoveArgs, TransportType};
+use crate::cli::command::{AddArgs, RemoveArgs, RunArgs, TransportType};
 use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::config::store::ConfigStore;
+use crate::proxy::error::ProxyError;
 use crate::registry::error::RegistryError;
 use crate::registry::service::RegistryService;
 
@@ -27,6 +29,28 @@ fn describe_entry(entry: &McpServerEntry) -> (&str, &str) {
     match entry {
         McpServerEntry::Stdio(config) => ("stdio", &config.command),
         McpServerEntry::Http(config) => ("http", &config.url),
+    }
+}
+
+pub async fn run_run<S, F, Fut>(
+    service: &RegistryService<S>,
+    args: RunArgs,
+    run_stdio_proxy: F,
+) -> Result<(), ProxyError>
+where
+    S: ConfigStore,
+    F: FnOnce(StdioConfig) -> Fut,
+    Fut: Future<Output = Result<(), ProxyError>>,
+{
+    let servers = service.list_servers()?;
+    let entry = servers
+        .get(&args.name)
+        .ok_or_else(|| ProxyError::ServerNotFound {
+            name: args.name.clone(),
+        })?;
+    match entry {
+        McpServerEntry::Stdio(config) => run_stdio_proxy(config.clone()).await,
+        McpServerEntry::Http(_) => Err(ProxyError::UnsupportedTransport { name: args.name }),
     }
 }
 
@@ -122,6 +146,23 @@ mod tests {
             *self.config.borrow_mut() = config.clone();
             Ok(())
         }
+    }
+
+    fn stdio_config(command: &str) -> GatewayConfig {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "test".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: command.to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+            }),
+        );
+        config
+    }
+
+    async fn noop_proxy(_config: StdioConfig) -> Result<(), ProxyError> {
+        Ok(())
     }
 
     #[test]
@@ -355,4 +396,156 @@ mod tests {
         let result = run_remove(&service, args);
         assert!(matches!(result, Err(RegistryError::NotFound { .. })));
     }
+
+    #[tokio::test]
+    async fn run_run_server_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = RunArgs {
+            name: "nonexistent".to_string(),
+        };
+        let result = run_run(&service, args, noop_proxy).await;
+        assert!(matches!(result, Err(ProxyError::ServerNotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn run_run_http_unsupported() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "remote".to_string(),
+            McpServerEntry::Http(HttpConfig {
+                url: "https://example.com".to_string(),
+                headers: BTreeMap::new(),
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = RunArgs {
+            name: "remote".to_string(),
+        };
+        let result = run_run(&service, args, noop_proxy).await;
+        assert!(matches!(
+            result,
+            Err(ProxyError::UnsupportedTransport { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn run_run_with_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+
+        let args = RunArgs {
+            name: "test".to_string(),
+        };
+        let result = run_run(&service, args, noop_proxy).await;
+        assert!(matches!(result, Err(ProxyError::Registry(_))));
+    }
+
+    #[tokio::test]
+    async fn run_run_stdio_dispatches_to_proxy_runner() {
+        let store = FakeConfigStore::new(stdio_config("node"));
+        let service = RegistryService::new(store);
+
+        let args = RunArgs {
+            name: "test".to_string(),
+        };
+        let result = run_run(&service, args, noop_proxy).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_run_stdio_proxy_error_propagates() {
+        let store = FakeConfigStore::new(stdio_config("node"));
+        let service = RegistryService::new(store);
+
+        let args = RunArgs {
+            name: "test".to_string(),
+        };
+        let result = run_run(&service, args, failing_proxy).await;
+        assert!(matches!(result, Err(ProxyError::UpstreamSpawn { .. })));
+    }
+
+    #[tokio::test]
+    async fn run_run_stdio_e2e_with_in_memory_proxy() {
+        let store = FakeConfigStore::new(stdio_config("unused"));
+        let service = RegistryService::new(store);
+
+        let args = RunArgs {
+            name: "test".to_string(),
+        };
+
+        let result = run_run(&service, args, e2e_proxy).await;
+        assert!(result.is_ok());
+    }
+
+    async fn failing_proxy(_config: StdioConfig) -> Result<(), ProxyError> {
+        Err(ProxyError::UpstreamSpawn {
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "test"),
+        })
+    }
+
+    async fn e2e_proxy(_config: StdioConfig) -> Result<(), ProxyError> {
+        use rmcp::ServiceExt;
+
+        // Wire up a full in-memory proxy pipeline
+        let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);
+        let (downstream_server_t, downstream_client_t) = tokio::io::duplex(4096);
+
+        // Start mock upstream server
+        let upstream_handle = tokio::spawn(async move {
+            let s = MinimalServer.serve(upstream_server_t).await.unwrap();
+            let _ = s.waiting().await;
+        });
+
+        // Connect upstream client
+        let upstream = ().serve(upstream_client_t).await.unwrap();
+
+        // Start a client that exercises the proxy then disconnects
+        tokio::spawn(async move {
+            let client = ().serve(downstream_client_t).await.unwrap();
+            let tools = client.list_tools(None).await.unwrap();
+            assert!(tools.tools.is_empty());
+            drop(client);
+        });
+
+        // Run the proxy (blocks until downstream disconnects)
+        let result = crate::proxy::runner::serve_proxy(upstream, downstream_server_t).await;
+
+        let _ = upstream_handle.await;
+        result
+    }
 }
+
+#[cfg(test)]
+mod test_support {
+    use rmcp::model::*;
+    use rmcp::ServerHandler;
+
+    pub(crate) struct MinimalServer;
+
+    impl ServerHandler for MinimalServer {
+        fn get_info(&self) -> ServerInfo {
+            ServerInfo {
+                capabilities: ServerCapabilities::builder().enable_tools().build(),
+                ..Default::default()
+            }
+        }
+
+        async fn list_tools(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+        ) -> Result<ListToolsResult, rmcp::ErrorData> {
+            Ok(ListToolsResult {
+                tools: vec![],
+                next_cursor: None,
+                meta: None,
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+use test_support::MinimalServer;

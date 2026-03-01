@@ -1,9 +1,11 @@
 use clap::Parser;
+use rmcp::ServiceExt;
 
 use mcp_gateway::cli::command::{Cli, Command};
-use mcp_gateway::cli::runner::{run_add, run_list, run_remove};
+use mcp_gateway::cli::runner::{run_add, run_list, run_remove, run_run};
 use mcp_gateway::config::default_config_path;
 use mcp_gateway::config::store::FileConfigStore;
+use mcp_gateway::proxy::error::ProxyError;
 use mcp_gateway::registry::service::RegistryService;
 
 #[tokio::main]
@@ -21,6 +23,18 @@ async fn main() {
             run_list(&registry, &mut std::io::stdout()).map_err(|e| e.to_string())
         }
         Some(Command::Remove(args)) => run_remove(&registry, args).map_err(|e| e.to_string()),
+        Some(Command::Run(args)) => run_run(&registry, args, |config| async move {
+            let transport = mcp_gateway::proxy::runner::spawn_transport(&config)?;
+            let upstream =
+                ().serve(transport)
+                    .await
+                    .map_err(|e| ProxyError::UpstreamInit {
+                        message: e.to_string(),
+                    })?;
+            mcp_gateway::proxy::runner::serve_proxy(upstream, rmcp::transport::io::stdio()).await
+        })
+        .await
+        .map_err(|e| e.to_string()),
     };
 
     if let Err(e) = result {

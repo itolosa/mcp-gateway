@@ -22,6 +22,14 @@ pub enum Command {
     List,
     /// Remove a registered MCP server
     Remove(RemoveArgs),
+    /// Start the proxy for a registered MCP server
+    Run(RunArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct RunArgs {
+    /// Name of the server to proxy
+    pub name: String,
 }
 
 #[derive(Debug, Parser)]
@@ -209,6 +217,18 @@ mod tests {
     #[test]
     fn remove_requires_name() {
         let result = Cli::try_parse_from(["mcp-gateway", "remove"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_run() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "run", "my-server"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Run(ref args)) if args.name == "my-server"));
+    }
+
+    #[test]
+    fn run_requires_name() {
+        let result = Cli::try_parse_from(["mcp-gateway", "run"]);
         assert!(result.is_err());
     }
 }
