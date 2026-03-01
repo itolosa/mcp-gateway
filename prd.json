@@ -72,7 +72,7 @@
     {
       "id": 5,
       "title": "Remove a registered MCP server",
-      "status": "pending",
+      "status": "completed",
       "description": "Add 'mcp-gateway remove <name>' subcommand. RegistryService gets remove_server() that returns NotFound if the name doesn't exist. Removal persists to config store.",
       "acceptance_criteria": [
         "remove existing server succeeds and persists removal",

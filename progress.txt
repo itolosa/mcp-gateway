@@ -4,3 +4,10 @@ M4: List registered MCP servers - DONE
   - Added run_list() with writer parameter for testability
   - Added describe_entry() helper
   - 63 tests (54 unit + 9 integration), all quality gates pass
+
+M5: Remove a registered MCP server - DONE
+  - Added RegistryService::remove_server()
+  - Added Command::Remove(RemoveArgs) CLI subcommand
+  - Added run_remove() to runner
+  - 73 tests (62 unit + 11 integration), all quality gates pass
+  - 30 mutants tested: 26 caught, 4 unviable

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 
-use crate::cli::command::{AddArgs, TransportType};
+use crate::cli::command::{AddArgs, RemoveArgs, TransportType};
 use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::config::store::ConfigStore;
 use crate::registry::error::RegistryError;
@@ -28,6 +28,13 @@ fn describe_entry(entry: &McpServerEntry) -> (&str, &str) {
         McpServerEntry::Stdio(config) => ("stdio", &config.command),
         McpServerEntry::Http(config) => ("http", &config.url),
     }
+}
+
+pub fn run_remove<S: ConfigStore>(
+    service: &RegistryService<S>,
+    args: RemoveArgs,
+) -> Result<(), RegistryError> {
+    service.remove_server(&args.name)
 }
 
 pub fn run_add<S: ConfigStore>(
@@ -312,5 +319,40 @@ mod tests {
         let mut buf = Vec::new();
         let result = run_list(&service, &mut buf);
         assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn run_remove_existing_server_succeeds() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "target".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = RemoveArgs {
+            name: "target".to_string(),
+        };
+        run_remove(&service, args).unwrap();
+
+        let config = service.store().load().unwrap();
+        assert!(!config.mcp_servers.contains_key("target"));
+    }
+
+    #[test]
+    fn run_remove_nonexistent_returns_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = RemoveArgs {
+            name: "nope".to_string(),
+        };
+        let result = run_remove(&service, args);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
     }
 }

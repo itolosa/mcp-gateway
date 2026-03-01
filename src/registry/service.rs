@@ -33,6 +33,19 @@ impl<S: ConfigStore> RegistryService<S> {
         self.store.save(&config)?;
         Ok(())
     }
+
+    pub fn remove_server(&self, name: &str) -> Result<(), RegistryError> {
+        let mut config = self.store.load()?;
+
+        if config.mcp_servers.remove(name).is_none() {
+            return Err(RegistryError::NotFound {
+                name: name.to_string(),
+            });
+        }
+
+        self.store.save(&config)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -76,6 +89,7 @@ mod tests {
 
     struct FailingStore {
         fail_load: bool,
+        config: GatewayConfig,
     }
 
     impl ConfigStore for FailingStore {
@@ -83,7 +97,7 @@ mod tests {
             if self.fail_load {
                 Err(io_error())
             } else {
-                Ok(GatewayConfig::default())
+                Ok(self.config.clone())
             }
         }
 
@@ -132,7 +146,10 @@ mod tests {
 
     #[test]
     fn list_with_store_error_propagates() {
-        let service = RegistryService::new(FailingStore { fail_load: true });
+        let service = RegistryService::new(FailingStore {
+            fail_load: true,
+            config: GatewayConfig::default(),
+        });
 
         let result = service.list_servers();
         assert!(matches!(result, Err(RegistryError::Config(_))));
@@ -178,7 +195,10 @@ mod tests {
 
     #[test]
     fn add_with_store_load_error_propagates() {
-        let service = RegistryService::new(FailingStore { fail_load: true });
+        let service = RegistryService::new(FailingStore {
+            fail_load: true,
+            config: GatewayConfig::default(),
+        });
 
         let result = service.add_server("test".to_string(), stdio_entry());
         assert!(matches!(result, Err(RegistryError::Config(_))));
@@ -186,9 +206,61 @@ mod tests {
 
     #[test]
     fn add_with_store_save_error_propagates() {
-        let service = RegistryService::new(FailingStore { fail_load: false });
+        let service = RegistryService::new(FailingStore {
+            fail_load: false,
+            config: GatewayConfig::default(),
+        });
 
         let result = service.add_server("test".to_string(), stdio_entry());
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn remove_existing_server_succeeds() {
+        let mut initial = GatewayConfig::default();
+        initial.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(initial);
+        let service = RegistryService::new(store);
+
+        service.remove_server("s1").unwrap();
+
+        let config = service.store().load().unwrap();
+        assert!(!config.mcp_servers.contains_key("s1"));
+    }
+
+    #[test]
+    fn remove_nonexistent_server_returns_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let result = service.remove_server("nope");
+        assert!(matches!(
+            result,
+            Err(RegistryError::NotFound { name }) if name == "nope"
+        ));
+    }
+
+    #[test]
+    fn remove_with_store_load_error_propagates() {
+        let service = RegistryService::new(FailingStore {
+            fail_load: true,
+            config: GatewayConfig::default(),
+        });
+
+        let result = service.remove_server("test");
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn remove_with_store_save_error_propagates() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert("test".to_string(), stdio_entry());
+        let service = RegistryService::new(FailingStore {
+            fail_load: false,
+            config,
+        });
+
+        let result = service.remove_server("test");
         assert!(matches!(result, Err(RegistryError::Config(_))));
     }
 }

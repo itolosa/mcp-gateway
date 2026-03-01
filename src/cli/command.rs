@@ -20,6 +20,14 @@ pub enum Command {
     Add(AddArgs),
     /// List registered MCP servers
     List,
+    /// Remove a registered MCP server
+    Remove(RemoveArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct RemoveArgs {
+    /// Name of the server to remove
+    pub name: String,
 }
 
 #[derive(Debug, Parser)]
@@ -189,6 +197,18 @@ mod tests {
     #[test]
     fn parse_header_invalid() {
         let result = parse_header("novalue");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_remove() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "remove", "my-server"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Remove(ref args)) if args.name == "my-server"));
+    }
+
+    #[test]
+    fn remove_requires_name() {
+        let result = Cli::try_parse_from(["mcp-gateway", "remove"]);
         assert!(result.is_err());
     }
 }

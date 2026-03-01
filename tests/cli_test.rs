@@ -166,3 +166,52 @@ fn add_duplicate_fails() {
         .failure()
         .stderr(predicate::str::contains("already exists"));
 }
+
+#[test]
+fn remove_existing_server_succeeds() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+    let config_str = config_path.to_str().unwrap_or_default();
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_str,
+            "add",
+            "to-remove",
+            "-t",
+            "stdio",
+            "--command",
+            "echo",
+        ])
+        .assert()
+        .success();
+
+    cargo_bin_cmd!()
+        .args(["-c", config_str, "remove", "to-remove"])
+        .assert()
+        .success();
+
+    cargo_bin_cmd!()
+        .args(["-c", config_str, "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn remove_nonexistent_fails() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_path.to_str().unwrap_or_default(),
+            "remove",
+            "nope",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
