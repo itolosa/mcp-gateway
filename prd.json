@@ -1,6 +1,7 @@
 {
   "project": "mcp-gateway",
   "description": "A Rust-based proxy/firewall for Model Context Protocol (MCP) servers",
+  "notes": "Milestones 7+ leverage rmcp (official Anthropic MCP SDK) for JSON-RPC, transports, and protocol types. OAuth uses the oauth2 crate for token exchange.",
   "milestones": [
     {
       "id": 1,
@@ -98,92 +99,78 @@
     },
     {
       "id": 7,
-      "title": "OAuth authentication - initial flow",
+      "title": "Integrate rmcp and async runtime",
       "status": "pending",
-      "description": "Implement OAuth client for MCP servers that require authentication. Create auth/ module with OAuthClient that handles the authorization code flow, opening a browser for user consent and receiving the callback.",
+      "description": "Add rmcp (official Anthropic MCP SDK) and tokio as dependencies. Make main() async. Create the proxy/ module skeleton with error types. Verify the project compiles and all existing tests still pass. This is the foundation for the proxy server.",
       "acceptance_criteria": [
-        "OAuthClient initiates authorization code flow",
-        "Local callback server receives the auth code",
-        "Auth code is exchanged for access + refresh tokens",
-        "Tokens are stored via TokenStore trait",
-        "FileTokenStore persists tokens to disk",
-        "Error handling for network failures and invalid responses",
+        "rmcp and tokio added to Cargo.toml",
+        "main() is async (#[tokio::main])",
+        "proxy/ module created with mod.rs and error.rs",
+        "All existing CLI tests continue to pass",
         "All quality gates pass"
       ]
     },
     {
       "id": 8,
-      "title": "OAuth re-authentication",
+      "title": "Proxy server - stdio upstream forwarding",
       "status": "pending",
-      "description": "Handle expired or revoked tokens by detecting 401 responses from upstream MCP servers and triggering re-authentication. The proxy should transparently retry the failed request after obtaining new tokens.",
+      "description": "Implement the core proxy: an rmcp server (downstream, stdio transport) that forwards all MCP requests to a single upstream MCP server (also stdio, spawned as child process via rmcp client). The gateway reads config to know which upstream to connect to. 'mcp-gateway run <name>' starts the proxy for the named server.",
       "acceptance_criteria": [
-        "401 responses from upstream trigger re-auth flow",
-        "Re-auth obtains new tokens and retries the original request",
-        "Failed re-auth surfaces a clear error to the client",
-        "Re-auth does not loop infinitely on persistent failures",
+        "Command::Run(RunArgs) added to CLI with server name argument",
+        "Gateway spawns upstream MCP server as child process using rmcp",
+        "initialize, tools/list, tools/call are forwarded to upstream and responses relayed back",
+        "Upstream errors are forwarded as MCP error responses",
+        "Gateway exits cleanly when downstream disconnects",
         "All quality gates pass"
       ]
     },
     {
       "id": 9,
-      "title": "OAuth token refresh",
+      "title": "E2E proxy test with in-memory transport",
       "status": "pending",
-      "description": "Implement proactive token refresh using refresh tokens before access tokens expire. Track token expiry and refresh preemptively to avoid disrupting in-flight requests.",
+      "description": "Write E2E tests using rmcp-in-process-transport to test the proxy without real child processes. Create a mock MCP server that implements tools/list and tools/call. Verify full request/response flow through the gateway.",
       "acceptance_criteria": [
-        "Access tokens are refreshed before expiry using refresh tokens",
-        "Refresh happens proactively (before the token actually expires)",
-        "Failed refresh falls back to full re-auth",
-        "Concurrent requests share the refreshed token",
+        "Mock MCP server implements initialize, tools/list, tools/call via rmcp ServerHandler",
+        "E2E test: client -> gateway -> mock upstream -> gateway -> client",
+        "tools/list returns the upstream's tools through the gateway",
+        "tools/call executes on upstream and result flows back through gateway",
+        "Error from upstream propagates correctly to client",
         "All quality gates pass"
       ]
     },
     {
       "id": 10,
-      "title": "Attached mode - proxy server",
+      "title": "HTTP upstream transport",
       "status": "pending",
-      "description": "Implement the core proxy server that listens for MCP requests from the sandboxed Claude (downstream) via HTTP Streamable transport and forwards them to upstream MCP servers via stdio or HTTP/SSE. Create ProxySession, JsonRpcHandler, StdioTransport, and HttpTransport.",
+      "description": "Extend the proxy to connect to HTTP/SSE upstream MCP servers in addition to stdio. The transport type is determined by the server config entry type (stdio vs http). Use rmcp's HTTP client transport.",
       "acceptance_criteria": [
-        "Gateway listens on a configurable port for HTTP Streamable MCP",
-        "JSON-RPC 2.0 requests are parsed and dispatched correctly",
-        "initialize, tools/list, tools/call methods are proxied",
-        "StdioTransport spawns and communicates with local MCP servers",
-        "HttpTransport connects to remote MCP servers via HTTP/SSE",
-        "Errors from upstream are forwarded as JSON-RPC error responses",
+        "HTTP server entries use rmcp HTTP/SSE client transport",
+        "Stdio server entries continue to use child process transport",
+        "Transport selection is based on McpServerEntry type (Stdio vs Http)",
+        "E2E test with mock HTTP upstream",
         "All quality gates pass"
       ]
     },
     {
       "id": 11,
-      "title": "End-to-end test with mock upstream",
+      "title": "Allowlist - config and runtime filtering",
       "status": "pending",
-      "description": "Create a mock MCP server (tiny axum app) that responds to standard MCP methods. Write E2E tests that start the gateway, connect via the mock client, and verify requests are correctly proxied to/from the mock upstream.",
-      "acceptance_criteria": [
-        "Mock MCP server implements initialize, tools/list, tools/call",
-        "E2E test: client -> gateway -> mock upstream -> gateway -> client",
-        "Request/response payloads are verified end-to-end",
-        "Error scenarios are tested (upstream down, timeout, malformed response)",
-        "All quality gates pass"
-      ]
-    },
-    {
-      "id": 12,
-      "title": "Allowlist - configuration",
-      "status": "pending",
-      "description": "Add allowlist configuration to GatewayConfig. Each MCP server entry can have an optional 'allowedTools' list. When set, only tools in the list are visible to the downstream client. Create AllowlistFilter and ToolFilter trait in filter/ module.",
+      "description": "Add allowlist configuration to GatewayConfig. Each MCP server entry gets an optional 'allowedTools' list. Create ToolFilter trait and AllowlistFilter in filter/ module. The proxy intercepts tools/list and tools/call to enforce the allowlist.",
       "acceptance_criteria": [
         "Config supports optional 'allowedTools' array per server entry",
-        "AllowlistFilter implements ToolFilter trait",
+        "ToolFilter trait with filter_tools() and is_tool_allowed() methods",
+        "AllowlistFilter implements ToolFilter",
         "tools/list responses are filtered to only include allowed tools",
-        "tools/call for non-allowed tools returns an error",
+        "tools/call for non-allowed tools returns an error without calling upstream",
         "Empty allowlist means all tools are allowed (passthrough)",
         "All quality gates pass"
       ]
     },
     {
-      "id": 13,
+      "id": 12,
       "title": "Allowlist - CLI management",
       "status": "pending",
-      "description": "Add CLI commands to manage tool allowlists: add/remove tools from a server's allowlist, and display the current allowlist.",
+      "description": "Add CLI commands to manage tool allowlists: add/remove tools from a server's allowlist, and display the current allowlist. RegistryService gets methods for allowlist CRUD.",
       "acceptance_criteria": [
         "CLI command to add tools to a server's allowlist",
         "CLI command to remove tools from a server's allowlist",
@@ -194,13 +181,13 @@
       ]
     },
     {
-      "id": 14,
+      "id": 13,
       "title": "Denylist with precedence over allowlist",
       "status": "pending",
-      "description": "Add denylist configuration ('deniedTools') that takes precedence over the allowlist. Create DenylistFilter and CompoundFilter<A, D> that composes allow and deny filters. A tool on the denylist is always hidden, even if it appears on the allowlist.",
+      "description": "Add denylist configuration ('deniedTools') that takes precedence over the allowlist. Create DenylistFilter and CompoundFilter that composes allow and deny filters. CLI commands for denylist management.",
       "acceptance_criteria": [
         "Config supports optional 'deniedTools' array per server entry",
-        "DenylistFilter implements ToolFilter trait",
+        "DenylistFilter implements ToolFilter",
         "CompoundFilter composes AllowlistFilter and DenylistFilter",
         "Denylist takes precedence: denied tools are hidden even if allowed",
         "CLI commands to manage denylists (add/remove/show)",
@@ -209,7 +196,7 @@
       ]
     },
     {
-      "id": 15,
+      "id": 14,
       "title": "CLI tools as MCP",
       "status": "pending",
       "description": "Allow host CLI tools (e.g., gh, docker) to be exposed as MCP tool calls. Add a 'cliTools' config section that maps tool names to shell commands with argument templates. Create CliToolProvider that executes commands and returns results as MCP tool responses.",
@@ -224,8 +211,8 @@
       ]
     },
     {
-      "id": 16,
-      "title": "Unified filtering for all exposed MCPs",
+      "id": 15,
+      "title": "Unified filtering for all exposed tools",
       "status": "pending",
       "description": "Apply allow/deny filtering uniformly across both upstream MCP tools and locally-defined CLI tools. Ensure the ToolFilter pipeline processes all tool sources consistently.",
       "acceptance_criteria": [
@@ -237,7 +224,37 @@
       ]
     },
     {
+      "id": 16,
+      "title": "OAuth authentication",
+      "status": "pending",
+      "description": "Implement OAuth 2.1 authentication for HTTP upstream MCP servers using the oauth2 crate. Discover authorization server metadata (RFC 8414), perform authorization code flow with PKCE, exchange for tokens. Use rmcp's auth feature for token injection into requests.",
+      "acceptance_criteria": [
+        "Fetch and parse RFC 8414 authorization server metadata",
+        "Fetch and parse RFC 9728 protected resource metadata",
+        "Authorization code flow with PKCE (S256) via oauth2 crate",
+        "Tokens stored securely on disk (TokenStore trait + FileTokenStore)",
+        "Access token injected into upstream HTTP requests",
+        "Error handling for network failures and invalid responses",
+        "All quality gates pass"
+      ]
+    },
+    {
       "id": 17,
+      "title": "Token refresh and re-authentication",
+      "status": "pending",
+      "description": "Handle expired tokens: proactive refresh before expiry using refresh tokens, and reactive re-auth on 401 responses. Transparent retry of failed requests after obtaining new tokens.",
+      "acceptance_criteria": [
+        "Access tokens are refreshed before expiry using refresh tokens",
+        "401 responses from upstream trigger re-auth flow",
+        "Re-auth obtains new tokens and retries the original request",
+        "Failed re-auth surfaces a clear error to the client",
+        "Re-auth does not loop infinitely on persistent failures",
+        "Concurrent requests share the refreshed token",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 18,
       "title": "Stress, chaos, and end-to-end tests",
       "status": "pending",
       "description": "Comprehensive test suite covering load testing, timeout simulation, concurrent connections, malformed input handling, and chaos scenarios (upstream crashes, network interruptions).",
@@ -251,7 +268,7 @@
       ]
     },
     {
-      "id": 18,
+      "id": 19,
       "title": "Documentation",
       "status": "pending",
       "description": "Write comprehensive documentation including README with quick start guide, configuration reference, architecture overview, and examples for common use cases.",
@@ -265,8 +282,8 @@
       ]
     },
     {
-      "id": 19,
-      "title": "Port and detach mode",
+      "id": 20,
+      "title": "Daemon mode (start/detach)",
       "status": "pending",
       "description": "Allow the gateway to run as a background daemon. 'mcp-gateway start' launches the proxy in detached mode on a configurable port, writing a PID file for lifecycle management.",
       "acceptance_criteria": [
@@ -279,31 +296,17 @@
       ]
     },
     {
-      "id": 20,
-      "title": "Process management",
+      "id": 21,
+      "title": "Process management and logging",
       "status": "pending",
-      "description": "Add process lifecycle commands: stop (graceful shutdown via PID), status (check if running), restart (stop + start). DaemonManager handles PID file operations and signal delivery.",
+      "description": "Add process lifecycle commands (stop, status, restart) and structured logging. DaemonManager handles PID file operations and signal delivery. Logging uses tracing crate with configurable levels.",
       "acceptance_criteria": [
         "mcp-gateway stop sends SIGTERM and waits for graceful shutdown",
         "mcp-gateway status reports running/stopped with PID and port",
         "mcp-gateway restart performs stop then start",
         "Stale PID files are detected and cleaned up",
-        "Graceful shutdown completes in-flight requests before exiting",
-        "All quality gates pass"
-      ]
-    },
-    {
-      "id": 21,
-      "title": "Logging",
-      "status": "pending",
-      "description": "Add structured logging to the gateway. In attached mode, logs go to stderr. In daemon mode, logs are appended to a log file. Configurable log level via --log-level flag or config.",
-      "acceptance_criteria": [
         "Structured log output with timestamp, level, module, message",
         "Configurable log level (error, warn, info, debug, trace)",
-        "Attached mode: logs to stderr",
-        "Daemon mode: logs to file (configurable path)",
-        "Request/response logging at debug level",
-        "Error conditions are logged at error/warn level",
         "All quality gates pass"
       ]
     },

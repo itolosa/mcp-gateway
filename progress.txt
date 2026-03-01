@@ -15,3 +15,12 @@ M5: Remove a registered MCP server - DONE
 M6: Full CLI lifecycle integration test - DONE
   - E2E test: add stdio (with env) -> list -> add http (with headers) -> list both -> verify config -> remove -> list remaining -> verify gone
   - 74 tests (62 unit + 12 integration), all quality gates pass
+
+--- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
+Key changes from original plan:
+  - M7: Integrate rmcp + tokio (foundation)
+  - M8-9: Proxy server with stdio forwarding + E2E tests using in-memory transport
+  - M10: HTTP upstream transport
+  - M11-15: Filtering (allowlist/denylist) and CLI tools as MCP (core security value)
+  - M16-17: OAuth moved later (proxy works first, auth adds on top)
+  - M18-22: Tests, docs, daemon mode (unchanged)
