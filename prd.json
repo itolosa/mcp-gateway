@@ -58,7 +58,7 @@
     {
       "id": 4,
       "title": "List registered MCP servers",
-      "status": "pending",
+      "status": "completed",
       "description": "Add 'mcp-gateway list' subcommand that displays all registered servers in a tabular format showing NAME, TYPE, and TARGET (command for stdio, url for http). RegistryService gets a list_servers() method.",
       "acceptance_criteria": [
         "list on empty config prints nothing (or a 'no servers' message)",

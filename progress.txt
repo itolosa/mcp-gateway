@@ -1,0 +1,6 @@
+M4: List registered MCP servers - DONE
+  - Added RegistryService::list_servers()
+  - Added Command::List CLI subcommand
+  - Added run_list() with writer parameter for testability
+  - Added describe_entry() helper
+  - 63 tests (54 unit + 9 integration), all quality gates pass

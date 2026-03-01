@@ -18,6 +18,8 @@ pub struct Cli {
 pub enum Command {
     /// Register a new MCP server
     Add(AddArgs),
+    /// List registered MCP servers
+    List,
 }
 
 #[derive(Debug, Parser)]

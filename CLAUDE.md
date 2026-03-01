@@ -42,6 +42,8 @@ Build target is `/tmp/mcp-gateway-target` (set in `.cargo/config.toml`).
 
 **RTFM** - Search the docs first. Always verify against official documentation for the version we are using. We use latest stable versions and update frequently.
 
+**Boy Scout Rule** - Leave the place better than we found it. No leftover files, no garbage. If something is generated/temporary, either `.gitignore` it or delete it. Clean as you go.
+
 ## Workflow Rules
 
 - **Task loop**: Always check `prd.json` for the highest-priority unblocked pending milestone. Implement it, update `progress.txt` with the completion note, mark the milestone as `"completed"` in `prd.json`, commit, then repeat with the next milestone.

@@ -1,10 +1,34 @@
 use std::collections::BTreeMap;
+use std::io::Write;
 
 use crate::cli::command::{AddArgs, TransportType};
 use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::config::store::ConfigStore;
 use crate::registry::error::RegistryError;
 use crate::registry::service::RegistryService;
+
+pub fn run_list<S: ConfigStore>(
+    service: &RegistryService<S>,
+    out: &mut impl Write,
+) -> Result<(), RegistryError> {
+    let servers = service.list_servers()?;
+    if servers.is_empty() {
+        return Ok(());
+    }
+    let _ = writeln!(out, "{:<20} {:<10} TARGET", "NAME", "TYPE");
+    for (name, entry) in &servers {
+        let (server_type, target) = describe_entry(entry);
+        let _ = writeln!(out, "{:<20} {:<10} {}", name, server_type, target);
+    }
+    Ok(())
+}
+
+fn describe_entry(entry: &McpServerEntry) -> (&str, &str) {
+    match entry {
+        McpServerEntry::Stdio(config) => ("stdio", &config.command),
+        McpServerEntry::Http(config) => ("http", &config.url),
+    }
+}
 
 pub fn run_add<S: ConfigStore>(
     service: &RegistryService<S>,
@@ -49,21 +73,41 @@ mod tests {
     use crate::config::error::ConfigError;
     use crate::config::model::GatewayConfig;
     use std::cell::RefCell;
+    use std::path::PathBuf;
 
     struct FakeConfigStore {
         config: RefCell<GatewayConfig>,
+        fail_load: bool,
     }
 
     impl FakeConfigStore {
         fn new(config: GatewayConfig) -> Self {
             Self {
                 config: RefCell::new(config),
+                fail_load: false,
             }
+        }
+
+        fn failing() -> Self {
+            Self {
+                config: RefCell::new(GatewayConfig::default()),
+                fail_load: true,
+            }
+        }
+    }
+
+    fn io_error() -> ConfigError {
+        ConfigError::Io {
+            path: PathBuf::from("/fail"),
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
         }
     }
 
     impl ConfigStore for FakeConfigStore {
         fn load(&self) -> Result<GatewayConfig, ConfigError> {
+            if self.fail_load {
+                return Err(io_error());
+            }
             Ok(self.config.borrow().clone())
         }
 
@@ -195,5 +239,78 @@ mod tests {
                 headers: BTreeMap::from([("H".to_string(), "V".to_string())]),
             })
         );
+    }
+
+    #[test]
+    fn describe_stdio_entry_returns_type_and_command() {
+        let entry = McpServerEntry::Stdio(StdioConfig {
+            command: "node".to_string(),
+            args: vec![],
+            env: BTreeMap::new(),
+        });
+        assert_eq!(describe_entry(&entry), ("stdio", "node"));
+    }
+
+    #[test]
+    fn describe_http_entry_returns_type_and_url() {
+        let entry = McpServerEntry::Http(HttpConfig {
+            url: "https://example.com".to_string(),
+            headers: BTreeMap::new(),
+        });
+        assert_eq!(describe_entry(&entry), ("http", "https://example.com"));
+    }
+
+    #[test]
+    fn run_list_empty_config_writes_nothing() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let mut buf = Vec::new();
+        run_list(&service, &mut buf).unwrap();
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn run_list_populated_config_writes_table() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "my-server".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "node".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+            }),
+        );
+        config.mcp_servers.insert(
+            "remote".to_string(),
+            McpServerEntry::Http(HttpConfig {
+                url: "https://example.com".to_string(),
+                headers: BTreeMap::new(),
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let mut buf = Vec::new();
+        run_list(&service, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(output.contains("NAME"));
+        assert!(output.contains("TYPE"));
+        assert!(output.contains("TARGET"));
+        assert!(output.contains("my-server"));
+        assert!(output.contains("stdio"));
+        assert!(output.contains("node"));
+        assert!(output.contains("remote"));
+        assert!(output.contains("http"));
+        assert!(output.contains("https://example.com"));
+    }
+
+    #[test]
+    fn run_list_with_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+        let mut buf = Vec::new();
+        let result = run_list(&service, &mut buf);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
     }
 }

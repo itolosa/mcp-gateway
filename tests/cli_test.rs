@@ -1,5 +1,6 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
+use predicates::str::contains;
 
 #[test]
 fn no_args_succeeds() {
@@ -58,6 +59,76 @@ fn add_stdio_writes_config_file() {
     assert!(contents.contains("my-server"));
     assert!(contents.contains("stdio"));
     assert!(contents.contains("node"));
+}
+
+#[test]
+fn list_empty_config_prints_nothing() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+
+    cargo_bin_cmd!()
+        .args(["-c", config_path.to_str().unwrap_or_default(), "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn list_after_add_shows_server() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+    let config_str = config_path.to_str().unwrap_or_default();
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_str,
+            "add",
+            "my-server",
+            "-t",
+            "stdio",
+            "--command",
+            "node",
+        ])
+        .assert()
+        .success();
+
+    cargo_bin_cmd!()
+        .args(["-c", config_str, "list"])
+        .assert()
+        .success()
+        .stdout(contains("my-server"))
+        .stdout(contains("stdio"))
+        .stdout(contains("node"));
+}
+
+#[test]
+fn list_shows_http_server() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+    let config_str = config_path.to_str().unwrap_or_default();
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_str,
+            "add",
+            "remote",
+            "-t",
+            "http",
+            "--url",
+            "https://example.com/mcp",
+        ])
+        .assert()
+        .success();
+
+    cargo_bin_cmd!()
+        .args(["-c", config_str, "list"])
+        .assert()
+        .success()
+        .stdout(contains("remote"))
+        .stdout(contains("http"))
+        .stdout(contains("https://example.com/mcp"));
 }
 
 #[test]

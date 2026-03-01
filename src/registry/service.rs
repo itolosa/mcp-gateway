@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::config::model::McpServerEntry;
 use crate::config::store::ConfigStore;
 use crate::registry::error::RegistryError;
@@ -13,6 +15,11 @@ impl<S: ConfigStore> RegistryService<S> {
 
     pub fn store(&self) -> &S {
         &self.store
+    }
+
+    pub fn list_servers(&self) -> Result<BTreeMap<String, McpServerEntry>, RegistryError> {
+        let config = self.store.load()?;
+        Ok(config.mcp_servers)
     }
 
     pub fn add_server(&self, name: String, entry: McpServerEntry) -> Result<(), RegistryError> {
@@ -98,6 +105,37 @@ mod tests {
             url: "https://example.com".to_string(),
             headers: BTreeMap::new(),
         })
+    }
+
+    #[test]
+    fn list_empty_config_returns_empty() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let result = service.list_servers().unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn list_populated_config_returns_all_servers() {
+        let mut initial = GatewayConfig::default();
+        initial.mcp_servers.insert("s1".to_string(), stdio_entry());
+        initial.mcp_servers.insert("h1".to_string(), http_entry());
+        let store = FakeConfigStore::new(initial);
+        let service = RegistryService::new(store);
+
+        let result = service.list_servers().unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("s1"));
+        assert!(result.contains_key("h1"));
+    }
+
+    #[test]
+    fn list_with_store_error_propagates() {
+        let service = RegistryService::new(FailingStore { fail_load: true });
+
+        let result = service.list_servers();
+        assert!(matches!(result, Err(RegistryError::Config(_))));
     }
 
     #[test]
