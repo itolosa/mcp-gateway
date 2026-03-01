@@ -25,7 +25,7 @@ Build target is `/tmp/mcp-gateway-target` (set in `.cargo/config.toml`).
 1. **Format**: `cargo fmt --all --check` must pass
 2. **Lint**: zero clippy warnings (`-D warnings`)
 3. **Coverage**: 100% line and function coverage (excluding `main.rs`)
-4. **Mutation testing**: all mutants must be caught; config in `.cargo/mutants.toml` (excludes `main.rs`)
+4. **Mutation testing**: all mutants must be caught; config in `.cargo/mutants.toml` (excludes `main.rs`). **Never skip or exclude mutants** — if a mutant survives, fix the code or tests to kill it properly
 5. **Tests follow BDD**: SUT executed once per test case, sociable unit tests + narrow integration tests (mock upstream)
 
 ## Architecture Principles
@@ -44,6 +44,8 @@ Build target is `/tmp/mcp-gateway-target` (set in `.cargo/config.toml`).
 
 ## Workflow Rules
 
+- **Task loop**: Always check `prd.json` for the highest-priority unblocked pending milestone. Implement it, update `progress.txt` with the completion note, mark the milestone as `"completed"` in `prd.json`, commit, then repeat with the next milestone.
+- **Commit after every win**: Always commit after each significant progress (milestone complete, quality gates passing, major refactor done). Small frequent commits let us roll back safely.
 - Spawn multiple agents in parallel for wide research tasks
 - Incremental approach: build by milestones, verify each before moving on
 - All config files are JSON

@@ -1,0 +1,325 @@
+{
+  "project": "mcp-gateway",
+  "description": "A Rust-based proxy/firewall for Model Context Protocol (MCP) servers",
+  "milestones": [
+    {
+      "id": 1,
+      "title": "CLI with version and help text",
+      "status": "completed",
+      "description": "Bootstrap the CLI using clap derive with --version, --help, and a global --config/-c flag. Create the project structure with cli/command.rs, cli/runner.rs, main.rs composition root, and integration tests via assert_cmd.",
+      "acceptance_criteria": [
+        "Running with no args succeeds (exit 0)",
+        "--version prints the version from Cargo.toml",
+        "--help prints the project description ('proxy/firewall')",
+        "Unknown subcommands fail with 'unrecognized subcommand' error",
+        "--config / -c accepts a PathBuf for config file override",
+        "All quality gates pass (fmt, clippy, 100% coverage, all mutants killed)"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Read configuration file",
+      "status": "completed",
+      "description": "Implement the config module with GatewayConfig, McpServerEntry (Stdio/Http tagged enum), ConfigError, and the ConfigStore trait with FileConfigStore. JSON config uses 'mcpServers' key with serde tagged unions. FileConfigStore returns default config when file is missing.",
+      "acceptance_criteria": [
+        "Deserialize empty JSON gives empty config",
+        "Deserialize stdio server with command/args/env",
+        "Deserialize http server with url/headers",
+        "Serialize/deserialize roundtrip preserves data",
+        "Empty args/env/headers are omitted from serialized JSON",
+        "FileConfigStore::load returns default when file not found",
+        "FileConfigStore::load returns Parse error for malformed JSON",
+        "FileConfigStore::load returns Io error for permission denied",
+        "FileConfigStore::save writes valid pretty JSON",
+        "FileConfigStore::save creates parent directories",
+        "FileConfigStore::save returns Io error for bad paths",
+        "default_config_path() returns ~/.mcp-gateway.json",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Register (add) an MCP server",
+      "status": "completed",
+      "description": "Implement RegistryService<S: ConfigStore> with add_server(). Add Command::Add variant to CLI with name, transport type, command/url/args/env/headers. Runner dispatches parsed CLI args to the registry service. Integration tests verify end-to-end add and duplicate detection.",
+      "acceptance_criteria": [
+        "add to empty config succeeds and persists to store",
+        "add duplicate name returns AlreadyExists error",
+        "Store load/save errors propagate as RegistryError::Config",
+        "CLI 'add' with stdio transport writes correct JSON to config file",
+        "CLI 'add' with http transport writes correct JSON to config file",
+        "--command is required for stdio transport",
+        "--url is required for http transport",
+        "--env KEY=VALUE and --header KEY:VALUE are parsed correctly",
+        "Duplicate add via CLI fails with 'already exists' error on stderr",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 4,
+      "title": "List registered MCP servers",
+      "status": "pending",
+      "description": "Add 'mcp-gateway list' subcommand that displays all registered servers in a tabular format showing NAME, TYPE, and TARGET (command for stdio, url for http). RegistryService gets a list_servers() method.",
+      "acceptance_criteria": [
+        "list on empty config prints nothing (or a 'no servers' message)",
+        "list with servers prints tabular output with NAME, TYPE, TARGET columns",
+        "stdio servers show command as TARGET",
+        "http servers show url as TARGET",
+        "Integration test: add then list shows the added server",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Remove a registered MCP server",
+      "status": "pending",
+      "description": "Add 'mcp-gateway remove <name>' subcommand. RegistryService gets remove_server() that returns NotFound if the name doesn't exist. Removal persists to config store.",
+      "acceptance_criteria": [
+        "remove existing server succeeds and persists removal",
+        "remove nonexistent server returns NotFound error",
+        "Store errors propagate correctly",
+        "Integration test: add then remove then list shows empty",
+        "CLI remove with nonexistent name fails with 'not found' on stderr",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Full CLI lifecycle integration test",
+      "status": "pending",
+      "description": "End-to-end integration test covering the complete add -> list -> add another -> list both -> remove first -> list remaining lifecycle. Validates that all CLI commands work together correctly with a real config file.",
+      "acceptance_criteria": [
+        "Single integration test covers: add server A, list (shows A), add server B, list (shows A and B), remove A, list (shows only B)",
+        "Both stdio and http transport types are exercised",
+        "--env KEY=VALUE pairs appear in config file",
+        "--header KEY:VALUE pairs appear in config file",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 7,
+      "title": "OAuth authentication - initial flow",
+      "status": "pending",
+      "description": "Implement OAuth client for MCP servers that require authentication. Create auth/ module with OAuthClient that handles the authorization code flow, opening a browser for user consent and receiving the callback.",
+      "acceptance_criteria": [
+        "OAuthClient initiates authorization code flow",
+        "Local callback server receives the auth code",
+        "Auth code is exchanged for access + refresh tokens",
+        "Tokens are stored via TokenStore trait",
+        "FileTokenStore persists tokens to disk",
+        "Error handling for network failures and invalid responses",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 8,
+      "title": "OAuth re-authentication",
+      "status": "pending",
+      "description": "Handle expired or revoked tokens by detecting 401 responses from upstream MCP servers and triggering re-authentication. The proxy should transparently retry the failed request after obtaining new tokens.",
+      "acceptance_criteria": [
+        "401 responses from upstream trigger re-auth flow",
+        "Re-auth obtains new tokens and retries the original request",
+        "Failed re-auth surfaces a clear error to the client",
+        "Re-auth does not loop infinitely on persistent failures",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 9,
+      "title": "OAuth token refresh",
+      "status": "pending",
+      "description": "Implement proactive token refresh using refresh tokens before access tokens expire. Track token expiry and refresh preemptively to avoid disrupting in-flight requests.",
+      "acceptance_criteria": [
+        "Access tokens are refreshed before expiry using refresh tokens",
+        "Refresh happens proactively (before the token actually expires)",
+        "Failed refresh falls back to full re-auth",
+        "Concurrent requests share the refreshed token",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Attached mode - proxy server",
+      "status": "pending",
+      "description": "Implement the core proxy server that listens for MCP requests from the sandboxed Claude (downstream) via HTTP Streamable transport and forwards them to upstream MCP servers via stdio or HTTP/SSE. Create ProxySession, JsonRpcHandler, StdioTransport, and HttpTransport.",
+      "acceptance_criteria": [
+        "Gateway listens on a configurable port for HTTP Streamable MCP",
+        "JSON-RPC 2.0 requests are parsed and dispatched correctly",
+        "initialize, tools/list, tools/call methods are proxied",
+        "StdioTransport spawns and communicates with local MCP servers",
+        "HttpTransport connects to remote MCP servers via HTTP/SSE",
+        "Errors from upstream are forwarded as JSON-RPC error responses",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 11,
+      "title": "End-to-end test with mock upstream",
+      "status": "pending",
+      "description": "Create a mock MCP server (tiny axum app) that responds to standard MCP methods. Write E2E tests that start the gateway, connect via the mock client, and verify requests are correctly proxied to/from the mock upstream.",
+      "acceptance_criteria": [
+        "Mock MCP server implements initialize, tools/list, tools/call",
+        "E2E test: client -> gateway -> mock upstream -> gateway -> client",
+        "Request/response payloads are verified end-to-end",
+        "Error scenarios are tested (upstream down, timeout, malformed response)",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Allowlist - configuration",
+      "status": "pending",
+      "description": "Add allowlist configuration to GatewayConfig. Each MCP server entry can have an optional 'allowedTools' list. When set, only tools in the list are visible to the downstream client. Create AllowlistFilter and ToolFilter trait in filter/ module.",
+      "acceptance_criteria": [
+        "Config supports optional 'allowedTools' array per server entry",
+        "AllowlistFilter implements ToolFilter trait",
+        "tools/list responses are filtered to only include allowed tools",
+        "tools/call for non-allowed tools returns an error",
+        "Empty allowlist means all tools are allowed (passthrough)",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Allowlist - CLI management",
+      "status": "pending",
+      "description": "Add CLI commands to manage tool allowlists: add/remove tools from a server's allowlist, and display the current allowlist.",
+      "acceptance_criteria": [
+        "CLI command to add tools to a server's allowlist",
+        "CLI command to remove tools from a server's allowlist",
+        "CLI command to show a server's current allowlist",
+        "Changes persist to config file",
+        "Integration tests verify CLI allowlist management",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Denylist with precedence over allowlist",
+      "status": "pending",
+      "description": "Add denylist configuration ('deniedTools') that takes precedence over the allowlist. Create DenylistFilter and CompoundFilter<A, D> that composes allow and deny filters. A tool on the denylist is always hidden, even if it appears on the allowlist.",
+      "acceptance_criteria": [
+        "Config supports optional 'deniedTools' array per server entry",
+        "DenylistFilter implements ToolFilter trait",
+        "CompoundFilter composes AllowlistFilter and DenylistFilter",
+        "Denylist takes precedence: denied tools are hidden even if allowed",
+        "CLI commands to manage denylists (add/remove/show)",
+        "Integration tests verify precedence behavior",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 15,
+      "title": "CLI tools as MCP",
+      "status": "pending",
+      "description": "Allow host CLI tools (e.g., gh, docker) to be exposed as MCP tool calls. Add a 'cliTools' config section that maps tool names to shell commands with argument templates. Create CliToolProvider that executes commands and returns results as MCP tool responses.",
+      "acceptance_criteria": [
+        "Config supports 'cliTools' section with tool name -> command mapping",
+        "CLI tools appear in tools/list alongside upstream MCP tools",
+        "tools/call for CLI tools executes the configured command",
+        "Command arguments are safely templated (no shell injection)",
+        "stdout/stderr are captured and returned as tool results",
+        "Exit code is reflected in success/error response",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Unified filtering for all exposed MCPs",
+      "status": "pending",
+      "description": "Apply allow/deny filtering uniformly across both upstream MCP tools and locally-defined CLI tools. Ensure the ToolFilter pipeline processes all tool sources consistently.",
+      "acceptance_criteria": [
+        "Allowlist/denylist applies to CLI tools the same as upstream tools",
+        "tools/list merges and filters tools from all sources",
+        "tools/call routes to correct handler (upstream or CLI) after filtering",
+        "Filtering configuration is per-server for upstream, global for CLI tools",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Stress, chaos, and end-to-end tests",
+      "status": "pending",
+      "description": "Comprehensive test suite covering load testing, timeout simulation, concurrent connections, malformed input handling, and chaos scenarios (upstream crashes, network interruptions).",
+      "acceptance_criteria": [
+        "Load test: gateway handles N concurrent tool calls without degradation",
+        "Timeout test: slow upstream triggers timeout and clean error response",
+        "Crash test: upstream process crash is handled gracefully",
+        "Malformed input: invalid JSON-RPC requests return proper error codes",
+        "Concurrent connections: multiple clients can use the gateway simultaneously",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 18,
+      "title": "Documentation",
+      "status": "pending",
+      "description": "Write comprehensive documentation including README with quick start guide, configuration reference, architecture overview, and examples for common use cases.",
+      "acceptance_criteria": [
+        "README has project description, installation, quick start",
+        "Configuration reference documents all config fields",
+        "Architecture overview explains ports & adapters design",
+        "Examples cover: stdio server, http server, allowlist, denylist, CLI tools",
+        "CLI help text is complete and accurate for all commands",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 19,
+      "title": "Port and detach mode",
+      "status": "pending",
+      "description": "Allow the gateway to run as a background daemon. 'mcp-gateway start' launches the proxy in detached mode on a configurable port, writing a PID file for lifecycle management.",
+      "acceptance_criteria": [
+        "mcp-gateway start launches the proxy as a background process",
+        "Configurable port via --port flag or config",
+        "PID file is written for process identification",
+        "Start fails gracefully if port is already in use",
+        "Start fails if another instance is already running (PID check)",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Process management",
+      "status": "pending",
+      "description": "Add process lifecycle commands: stop (graceful shutdown via PID), status (check if running), restart (stop + start). DaemonManager handles PID file operations and signal delivery.",
+      "acceptance_criteria": [
+        "mcp-gateway stop sends SIGTERM and waits for graceful shutdown",
+        "mcp-gateway status reports running/stopped with PID and port",
+        "mcp-gateway restart performs stop then start",
+        "Stale PID files are detected and cleaned up",
+        "Graceful shutdown completes in-flight requests before exiting",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 21,
+      "title": "Logging",
+      "status": "pending",
+      "description": "Add structured logging to the gateway. In attached mode, logs go to stderr. In daemon mode, logs are appended to a log file. Configurable log level via --log-level flag or config.",
+      "acceptance_criteria": [
+        "Structured log output with timestamp, level, module, message",
+        "Configurable log level (error, warn, info, debug, trace)",
+        "Attached mode: logs to stderr",
+        "Daemon mode: logs to file (configurable path)",
+        "Request/response logging at debug level",
+        "Error conditions are logged at error/warn level",
+        "All quality gates pass"
+      ]
+    },
+    {
+      "id": 22,
+      "title": "Reattach to running gateway",
+      "status": "pending",
+      "description": "Allow a new CLI session to reattach to a running gateway daemon for live inspection. 'mcp-gateway attach' connects to the running instance and streams logs or allows interactive commands.",
+      "acceptance_criteria": [
+        "mcp-gateway attach connects to a running daemon",
+        "Live log streaming from the running instance",
+        "Attach fails gracefully if no daemon is running",
+        "Multiple attach sessions can coexist",
+        "Detach (Ctrl+C) leaves the daemon running",
+        "All quality gates pass"
+      ]
+    }
+  ]
+}
