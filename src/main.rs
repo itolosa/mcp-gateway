@@ -62,6 +62,7 @@ async fn main() {
                     } else {
                         Some(CliToolExecutor::new(gw.cli_tools))
                     };
+                    let server_name = args.name.clone();
                     run_run(&registry, args, |entry| async move {
                         let filter = CompoundFilter::new(
                             AllowlistFilter::new(entry.allowed_tools().to_vec()),
@@ -71,6 +72,29 @@ async fn main() {
                             mcp_gateway::config::model::McpServerEntry::Stdio(config) => {
                                 let transport =
                                     mcp_gateway::proxy::runner::spawn_transport(&config)?;
+                                let upstream =
+                                    ().serve(transport).await.map_err(|e| {
+                                        ProxyError::UpstreamInit {
+                                            message: e.to_string(),
+                                        }
+                                    })?;
+                                mcp_gateway::proxy::runner::serve_proxy(
+                                    upstream,
+                                    rmcp::transport::io::stdio(),
+                                    filter,
+                                    cli_tools,
+                                )
+                                .await
+                            }
+                            mcp_gateway::config::model::McpServerEntry::Http(ref config)
+                                if config.auth.is_some() =>
+                            {
+                                let transport =
+                                    mcp_gateway::proxy::runner::create_oauth_http_transport(
+                                        config,
+                                        &server_name,
+                                    )
+                                    .await?;
                                 let upstream =
                                     ().serve(transport).await.map_err(|e| {
                                         ProxyError::UpstreamInit {

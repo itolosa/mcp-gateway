@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 
+use rmcp::transport::auth::AuthClient;
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
 
 use crate::cli_tools::CliToolExecutor;
-use crate::config::model::{HttpConfig, StdioConfig};
+use crate::config::model::HttpConfig;
+use crate::config::model::StdioConfig;
 use crate::filter::ToolFilter;
+use crate::oauth;
 use crate::proxy::error::ProxyError;
 use crate::proxy::handler::ProxyHandler;
 
@@ -63,6 +66,34 @@ pub fn create_http_transport(
     Ok(StreamableHttpClientTransport::from_config(transport_config))
 }
 
+fn http_transport_err(e: impl std::fmt::Display) -> ProxyError {
+    ProxyError::HttpTransport {
+        message: e.to_string(),
+    }
+}
+
+pub async fn create_oauth_http_transport(
+    config: &HttpConfig,
+    server_name: &str,
+) -> Result<StreamableHttpClientTransport<AuthClient<reqwest::Client>>, ProxyError> {
+    let mut custom_headers = HashMap::new();
+    for (key, value) in &config.headers {
+        let header_name = http::HeaderName::try_from(key.as_str()).map_err(http_transport_err)?;
+        let header_value =
+            http::HeaderValue::try_from(value.as_str()).map_err(http_transport_err)?;
+        custom_headers.insert(header_name, header_value);
+    }
+
+    let oauth_config = config.auth.as_ref().ok_or_else(|| ProxyError::OAuthAuth {
+        message: "missing OAuth config".to_string(),
+    })?;
+
+    Ok(
+        oauth::create_oauth_transport(&config.url, oauth_config, server_name, custom_headers)
+            .await?,
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -96,6 +127,7 @@ mod tests {
             ]),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         };
         let result = create_http_transport(&config);
         assert!(result.is_ok());
@@ -108,6 +140,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         };
         let result = create_http_transport(&config);
         assert!(result.is_ok());
@@ -120,6 +153,7 @@ mod tests {
             headers: BTreeMap::from([("bad\nname".to_string(), "value".to_string())]),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         };
         let result = create_http_transport(&config);
         assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
@@ -132,6 +166,7 @@ mod tests {
             headers: BTreeMap::from([("X-Custom".to_string(), "bad\nvalue".to_string())]),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         };
         let result = create_http_transport(&config);
         assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
@@ -242,5 +277,106 @@ mod tests {
 
         // Wait for upstream mock to shut down cleanly
         let _ = upstream_handle.await;
+    }
+
+    #[tokio::test]
+    async fn create_oauth_http_transport_missing_auth_config_returns_error() {
+        let config = HttpConfig {
+            url: "http://localhost:8080/mcp".to_string(),
+            headers: BTreeMap::new(),
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            auth: None,
+        };
+        let result = create_oauth_http_transport(&config, "test").await;
+        let err = result.err().unwrap();
+        assert!(matches!(err, ProxyError::OAuthAuth { .. }));
+        assert!(err.to_string().contains("missing OAuth config"));
+    }
+
+    #[tokio::test]
+    async fn create_oauth_http_transport_invalid_url_returns_error() {
+        let config = HttpConfig {
+            url: "not a valid url".to_string(),
+            headers: BTreeMap::new(),
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            auth: Some(crate::config::model::OAuthConfig {
+                client_id: None,
+                client_secret: None,
+                scopes: vec![],
+                redirect_port: 9876,
+                credentials_file: None,
+            }),
+        };
+        let result = create_oauth_http_transport(&config, "test").await;
+        assert!(matches!(result, Err(ProxyError::OAuthAuth { .. })));
+    }
+
+    #[tokio::test]
+    async fn create_oauth_http_transport_valid_headers_fails_on_oauth() {
+        let config = HttpConfig {
+            url: "not a valid url".to_string(),
+            headers: BTreeMap::from([
+                ("Authorization".to_string(), "Bearer token".to_string()),
+                ("X-Custom".to_string(), "value".to_string()),
+            ]),
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            auth: Some(crate::config::model::OAuthConfig {
+                client_id: None,
+                client_secret: None,
+                scopes: vec![],
+                redirect_port: 9876,
+                credentials_file: None,
+            }),
+        };
+        let result = create_oauth_http_transport(&config, "test").await;
+        assert!(matches!(result, Err(ProxyError::OAuthAuth { .. })));
+    }
+
+    #[test]
+    fn http_transport_err_formats_message() {
+        let err = http_transport_err("bad header");
+        assert!(matches!(err, ProxyError::HttpTransport { .. }));
+        assert!(err.to_string().contains("bad header"));
+    }
+
+    #[tokio::test]
+    async fn create_oauth_http_transport_invalid_header_value_returns_error() {
+        let config = HttpConfig {
+            url: "http://localhost:8080/mcp".to_string(),
+            headers: BTreeMap::from([("X-Custom".to_string(), "bad\nvalue".to_string())]),
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            auth: Some(crate::config::model::OAuthConfig {
+                client_id: None,
+                client_secret: None,
+                scopes: vec![],
+                redirect_port: 9876,
+                credentials_file: None,
+            }),
+        };
+        let result = create_oauth_http_transport(&config, "test").await;
+        assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
+    }
+
+    #[tokio::test]
+    async fn create_oauth_http_transport_invalid_header_returns_error() {
+        let config = HttpConfig {
+            url: "http://localhost:8080/mcp".to_string(),
+            headers: BTreeMap::from([("bad\nname".to_string(), "value".to_string())]),
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            auth: Some(crate::config::model::OAuthConfig {
+                client_id: None,
+                client_secret: None,
+                scopes: vec![],
+                redirect_port: 9876,
+                credentials_file: None,
+            }),
+        };
+        let result = create_oauth_http_transport(&config, "test").await;
+        assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
     }
 }

@@ -105,6 +105,20 @@ M15: Unified filtering for all exposed tools - DONE
   - 225 tests (201 unit + 18 integration + 6 E2E), all quality gates pass
   - 92 mutants tested: 77 caught, 15 unviable
 
+M16+M17: OAuth authentication + token refresh - DONE (combined)
+  - Leverages rmcp's built-in auth feature: AuthorizationManager, AuthClient<C>, CredentialStore
+  - OAuthConfig added to HttpConfig: client_id, client_secret, scopes, redirect_port, credentials_file
+  - oauth/ module: error.rs (OAuthError enum), credentials.rs (FileCredentialStore), callback.rs (local TCP callback server), service.rs (create_oauth_transport)
+  - FileCredentialStore implements CredentialStore: load/save/clear JSON credentials in ~/.mcp-gateway/credentials/
+  - Callback server: raw TCP listener on localhost, parses code+state from GET query params, 120s timeout
+  - create_oauth_transport_with<F,Fut>: metadata discovery, credential loading, optional auth flow, returns StreamableHttpClientTransport<AuthClient<reqwest::Client>>
+  - AuthClient auto-injects Bearer token, auto-refreshes expired tokens (rmcp handles refresh lifecycle)
+  - Browser auth: spawns xdg-open/open/cmd for platform-appropriate browser launch
+  - proxy/runner.rs: create_oauth_http_transport + OAuthAuth error variant
+  - main.rs: routes to OAuth transport when config.auth.is_some()
+  - 288 tests (264 unit + 18 integration + 6 E2E), all quality gates pass
+  - 167 mutants tested: 96 caught, 71 unviable
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)

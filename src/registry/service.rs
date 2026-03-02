@@ -206,6 +206,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         })
     }
 

@@ -88,6 +88,27 @@ pub struct HttpConfig {
     pub allowed_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "deniedTools")]
     pub denied_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<OAuthConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default = "default_redirect_port")]
+    pub redirect_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials_file: Option<String>,
+}
+
+fn default_redirect_port() -> u16 {
+    9876
 }
 
 #[cfg(test)]
@@ -145,6 +166,7 @@ mod tests {
                 headers: BTreeMap::from([("Authorization".to_string(), "Bearer tok".to_string())]),
                 allowed_tools: vec![],
                 denied_tools: vec![],
+                auth: None,
             })
         );
     }
@@ -169,6 +191,7 @@ mod tests {
                 headers: BTreeMap::new(),
                 allowed_tools: vec![],
                 denied_tools: vec![],
+                auth: None,
             }),
         );
 
@@ -199,6 +222,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         });
         let json = serde_json::to_string(&entry).unwrap();
         assert!(!json.contains("headers"));
@@ -251,6 +275,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec!["b".to_string(), "c".to_string()],
             denied_tools: vec![],
+            auth: None,
         });
         assert_eq!(http.allowed_tools(), &["b", "c"]);
     }
@@ -275,6 +300,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec!["existing".to_string()],
             denied_tools: vec![],
+            auth: None,
         });
         entry.allowed_tools_mut().push("another".to_string());
         assert_eq!(entry.allowed_tools(), &["existing", "another"]);
@@ -330,6 +356,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         });
         let json = serde_json::to_string(&entry).unwrap();
         assert!(!json.contains("deniedTools"));
@@ -351,6 +378,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec!["b".to_string(), "c".to_string()],
+            auth: None,
         });
         assert_eq!(http.denied_tools(), &["b", "c"]);
     }
@@ -375,6 +403,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec!["existing".to_string()],
+            auth: None,
         });
         entry.denied_tools_mut().push("another".to_string());
         assert_eq!(entry.denied_tools(), &["existing", "another"]);
@@ -445,5 +474,125 @@ mod tests {
         };
         let json = serde_json::to_string(&def).unwrap();
         assert!(!json.contains("description"));
+    }
+
+    #[test]
+    fn http_omits_none_auth() {
+        let entry = McpServerEntry::Http(HttpConfig {
+            url: "https://x.com".to_string(),
+            headers: BTreeMap::new(),
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            auth: None,
+        });
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("auth"));
+    }
+
+    #[test]
+    fn deserialize_http_with_oauth_config() {
+        let json = r#"{
+            "mcpServers": {
+                "remote": {
+                    "type": "http",
+                    "url": "https://example.com/mcp",
+                    "auth": {
+                        "clientId": "my-app",
+                        "scopes": ["read", "write"],
+                        "redirectPort": 8080
+                    }
+                }
+            }
+        }"#;
+        let config: GatewayConfig = serde_json::from_str(json).unwrap();
+        let entry = config.mcp_servers.get("remote").unwrap();
+        assert!(matches!(
+            entry,
+            McpServerEntry::Http(http) if http.auth.as_ref().is_some_and(|a| {
+                a.client_id.as_deref() == Some("my-app")
+                    && a.client_secret.is_none()
+                    && a.scopes == vec!["read", "write"]
+                    && a.redirect_port == 8080
+                    && a.credentials_file.is_none()
+            })
+        ));
+    }
+
+    #[test]
+    fn oauth_config_default_redirect_port() {
+        let json = r#"{"scopes": []}"#;
+        let config: OAuthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.redirect_port, 9876);
+    }
+
+    #[test]
+    fn oauth_config_roundtrip() {
+        let config = OAuthConfig {
+            client_id: Some("app".to_string()),
+            client_secret: Some("secret".to_string()),
+            scopes: vec!["read".to_string()],
+            redirect_port: 7777,
+            credentials_file: Some("/tmp/creds.json".to_string()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let roundtrip: OAuthConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip, config);
+    }
+
+    #[test]
+    fn oauth_config_omits_empty_fields() {
+        let config = OAuthConfig {
+            client_id: None,
+            client_secret: None,
+            scopes: vec![],
+            redirect_port: 9876,
+            credentials_file: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("clientId"));
+        assert!(!json.contains("clientSecret"));
+        assert!(!json.contains("scopes"));
+        assert!(!json.contains("credentialsFile"));
+        assert!(json.contains("redirectPort"));
+    }
+
+    #[test]
+    fn oauth_config_camel_case_serialization() {
+        let config = OAuthConfig {
+            client_id: Some("id".to_string()),
+            client_secret: Some("sec".to_string()),
+            scopes: vec!["s".to_string()],
+            redirect_port: 1234,
+            credentials_file: Some("/f".to_string()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("clientId"));
+        assert!(json.contains("clientSecret"));
+        assert!(json.contains("redirectPort"));
+        assert!(json.contains("credentialsFile"));
+    }
+
+    #[test]
+    fn http_with_auth_roundtrip() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "remote".to_string(),
+            McpServerEntry::Http(HttpConfig {
+                url: "https://example.com/mcp".to_string(),
+                headers: BTreeMap::new(),
+                allowed_tools: vec![],
+                denied_tools: vec![],
+                auth: Some(OAuthConfig {
+                    client_id: Some("app".to_string()),
+                    client_secret: None,
+                    scopes: vec!["read".to_string()],
+                    redirect_port: 9876,
+                    credentials_file: None,
+                }),
+            }),
+        );
+        let json = serde_json::to_string(&config).unwrap();
+        let roundtrip: GatewayConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip, config);
     }
 }

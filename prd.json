@@ -226,7 +226,7 @@
     {
       "id": 16,
       "title": "OAuth authentication",
-      "status": "pending",
+      "status": "completed",
       "description": "Implement OAuth 2.1 authentication for HTTP upstream MCP servers using the oauth2 crate. Discover authorization server metadata (RFC 8414), perform authorization code flow with PKCE, exchange for tokens. Use rmcp's auth feature for token injection into requests.",
       "acceptance_criteria": [
         "Fetch and parse RFC 8414 authorization server metadata",
@@ -241,7 +241,7 @@
     {
       "id": 17,
       "title": "Token refresh and re-authentication",
-      "status": "pending",
+      "status": "completed",
       "description": "Handle expired tokens: proactive refresh before expiry using refresh tokens, and reactive re-auth on 401 responses. Transparent retry of failed requests after obtaining new tokens.",
       "acceptance_criteria": [
         "Access tokens are refreshed before expiry using refresh tokens",

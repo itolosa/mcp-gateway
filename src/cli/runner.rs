@@ -149,6 +149,7 @@ fn build_entry(
             headers: headers.into_iter().collect::<BTreeMap<_, _>>(),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         }),
     }
 }
@@ -280,6 +281,7 @@ mod tests {
                 headers: BTreeMap::from([("Auth".to_string(), "tok".to_string())]),
                 allowed_tools: vec![],
                 denied_tools: vec![],
+                auth: None,
             })
         );
     }
@@ -353,6 +355,7 @@ mod tests {
                 headers: BTreeMap::from([("H".to_string(), "V".to_string())]),
                 allowed_tools: vec![],
                 denied_tools: vec![],
+                auth: None,
             })
         );
     }
@@ -376,6 +379,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec![],
+            auth: None,
         });
         assert_eq!(describe_entry(&entry), ("http", "https://example.com"));
     }
@@ -410,6 +414,7 @@ mod tests {
                 headers: BTreeMap::new(),
                 allowed_tools: vec![],
                 denied_tools: vec![],
+                auth: None,
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -497,6 +502,7 @@ mod tests {
                 headers: BTreeMap::new(),
                 allowed_tools: vec![],
                 denied_tools: vec![],
+                auth: None,
             }),
         );
         let store = FakeConfigStore::new(config);
