@@ -78,6 +78,7 @@ mod tests {
             args: vec![],
             env: BTreeMap::new(),
             allowed_tools: vec![],
+            denied_tools: vec![],
         };
         let result = spawn_transport(&config);
         assert!(matches!(result, Err(ProxyError::UpstreamSpawn { .. })));
@@ -92,6 +93,7 @@ mod tests {
                 ("X-Custom".to_string(), "value".to_string()),
             ]),
             allowed_tools: vec![],
+            denied_tools: vec![],
         };
         let result = create_http_transport(&config);
         assert!(result.is_ok());
@@ -103,6 +105,7 @@ mod tests {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::new(),
             allowed_tools: vec![],
+            denied_tools: vec![],
         };
         let result = create_http_transport(&config);
         assert!(result.is_ok());
@@ -114,6 +117,7 @@ mod tests {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::from([("bad\nname".to_string(), "value".to_string())]),
             allowed_tools: vec![],
+            denied_tools: vec![],
         };
         let result = create_http_transport(&config);
         assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
@@ -125,6 +129,7 @@ mod tests {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::from([("X-Custom".to_string(), "bad\nvalue".to_string())]),
             allowed_tools: vec![],
+            denied_tools: vec![],
         };
         let result = create_http_transport(&config);
         assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
@@ -137,6 +142,7 @@ mod tests {
             args: vec!["--help".to_string()],
             env: BTreeMap::from([("MY_VAR".to_string(), "value".to_string())]),
             allowed_tools: vec![],
+            denied_tools: vec![],
         };
         let result = spawn_transport(&config);
         assert!(result.is_ok());

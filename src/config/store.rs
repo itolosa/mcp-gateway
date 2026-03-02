@@ -178,6 +178,7 @@ mod tests {
                 args: vec!["hello".to_string()],
                 env: std::collections::BTreeMap::new(),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             }),
         );
 

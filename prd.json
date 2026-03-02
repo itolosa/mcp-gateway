@@ -183,7 +183,7 @@
     {
       "id": 13,
       "title": "Denylist with precedence over allowlist",
-      "status": "pending",
+      "status": "completed",
       "description": "Add denylist configuration ('deniedTools') that takes precedence over the allowlist. Create DenylistFilter and CompoundFilter that composes allow and deny filters. CLI commands for denylist management.",
       "acceptance_criteria": [
         "Config supports optional 'deniedTools' array per server entry",

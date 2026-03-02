@@ -71,6 +71,19 @@ M12: Allowlist - CLI management - DONE
   - 153 tests (132 unit + 15 integration + 6 E2E), all quality gates pass
   - 63 mutants tested: 52 caught, 11 unviable
 
+M13: Denylist with precedence over allowlist - DONE
+  - DenylistFilter in filter/denylist.rs: empty = passthrough, non-empty = blocks listed tools
+  - CompoundFilter<A, D> in filter/compound.rs: composes allow + deny; deny takes precedence
+  - Config: denied_tools field on StdioConfig/HttpConfig (serde: "deniedTools", skip if empty)
+  - McpServerEntry::denied_tools()/denied_tools_mut() accessors
+  - RegistryService: get_denied_tools, add_denied_tools (skip duplicates), remove_denied_tools
+  - CLI: denylist {add, remove, show} subcommands with DenylistArgs/DenylistAction
+  - Runner: run_denylist_add, run_denylist_remove, run_denylist_show
+  - main.rs uses CompoundFilter(AllowlistFilter, DenylistFilter) for Run command
+  - Integration test: denylist_add_show_remove_lifecycle (full CLI lifecycle)
+  - 201 tests (177 unit + 18 integration + 6 E2E), all quality gates pass
+  - 85 mutants tested: 74 caught, 11 unviable
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)

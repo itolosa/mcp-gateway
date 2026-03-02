@@ -20,6 +20,8 @@ pub enum Command {
     Add(AddArgs),
     /// Manage tool allowlists
     Allowlist(AllowlistArgs),
+    /// Manage tool denylists
+    Denylist(DenylistArgs),
     /// List registered MCP servers
     List,
     /// Remove a registered MCP server
@@ -67,6 +69,37 @@ pub struct AllowlistModifyArgs {
 
 #[derive(Debug, Parser)]
 pub struct AllowlistShowArgs {
+    /// Name of the server
+    pub name: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct DenylistArgs {
+    #[command(subcommand)]
+    pub action: DenylistAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DenylistAction {
+    /// Add tools to a server's denylist
+    Add(DenylistModifyArgs),
+    /// Remove tools from a server's denylist
+    Remove(DenylistModifyArgs),
+    /// Show a server's current denylist
+    Show(DenylistShowArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct DenylistModifyArgs {
+    /// Name of the server
+    pub name: String,
+    /// Tool names to add or remove
+    #[arg(required = true)]
+    pub tools: Vec<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct DenylistShowArgs {
     /// Name of the server
     pub name: String,
 }
@@ -316,6 +349,60 @@ mod tests {
     #[test]
     fn allowlist_remove_requires_tools() {
         let result = Cli::try_parse_from(["mcp-gateway", "allowlist", "remove", "my-server"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_denylist_add() {
+        let cli = Cli::try_parse_from([
+            "mcp-gateway",
+            "denylist",
+            "add",
+            "my-server",
+            "delete",
+            "exec",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Denylist(DenylistArgs {
+                action: DenylistAction::Add(ref args),
+            })) if args.name == "my-server" && args.tools == vec!["delete", "exec"]
+        ));
+    }
+
+    #[test]
+    fn parses_denylist_remove() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "denylist", "remove", "my-server", "delete"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Denylist(DenylistArgs {
+                action: DenylistAction::Remove(ref args),
+            })) if args.name == "my-server" && args.tools == vec!["delete"]
+        ));
+    }
+
+    #[test]
+    fn parses_denylist_show() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "denylist", "show", "my-server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Denylist(DenylistArgs {
+                action: DenylistAction::Show(ref args),
+            })) if args.name == "my-server"
+        ));
+    }
+
+    #[test]
+    fn denylist_add_requires_tools() {
+        let result = Cli::try_parse_from(["mcp-gateway", "denylist", "add", "my-server"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn denylist_remove_requires_tools() {
+        let result = Cli::try_parse_from(["mcp-gateway", "denylist", "remove", "my-server"]);
         assert!(result.is_err());
     }
 }

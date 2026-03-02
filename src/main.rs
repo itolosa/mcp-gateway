@@ -1,14 +1,14 @@
 use clap::Parser;
 use rmcp::ServiceExt;
 
-use mcp_gateway::cli::command::{AllowlistAction, Cli, Command};
+use mcp_gateway::cli::command::{AllowlistAction, Cli, Command, DenylistAction};
 use mcp_gateway::cli::runner::{
-    run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_list, run_remove,
-    run_run,
+    run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
+    run_denylist_remove, run_denylist_show, run_list, run_remove, run_run,
 };
 use mcp_gateway::config::default_config_path;
 use mcp_gateway::config::store::FileConfigStore;
-use mcp_gateway::filter::AllowlistFilter;
+use mcp_gateway::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
 use mcp_gateway::proxy::error::ProxyError;
 use mcp_gateway::registry::service::RegistryService;
 
@@ -39,8 +39,23 @@ async fn main() {
                     .map_err(|e| e.to_string())
             }
         },
+        Some(Command::Denylist(args)) => match args.action {
+            DenylistAction::Add(modify_args) => {
+                run_denylist_add(&registry, modify_args).map_err(|e| e.to_string())
+            }
+            DenylistAction::Remove(modify_args) => {
+                run_denylist_remove(&registry, modify_args).map_err(|e| e.to_string())
+            }
+            DenylistAction::Show(show_args) => {
+                run_denylist_show(&registry, show_args, &mut std::io::stdout())
+                    .map_err(|e| e.to_string())
+            }
+        },
         Some(Command::Run(args)) => run_run(&registry, args, |entry| async move {
-            let filter = AllowlistFilter::new(entry.allowed_tools().to_vec());
+            let filter = CompoundFilter::new(
+                AllowlistFilter::new(entry.allowed_tools().to_vec()),
+                DenylistFilter::new(entry.denied_tools().to_vec()),
+            );
             match entry {
                 mcp_gateway::config::model::McpServerEntry::Stdio(config) => {
                     let transport = mcp_gateway::proxy::runner::spawn_transport(&config)?;

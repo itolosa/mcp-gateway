@@ -88,6 +88,48 @@ impl<S: ConfigStore> RegistryService<S> {
         self.store.save(&config)?;
         Ok(())
     }
+
+    pub fn get_denied_tools(&self, name: &str) -> Result<Vec<String>, RegistryError> {
+        let config = self.store.load()?;
+        let entry = config
+            .mcp_servers
+            .get(name)
+            .ok_or_else(|| RegistryError::NotFound {
+                name: name.to_string(),
+            })?;
+        Ok(entry.denied_tools().to_vec())
+    }
+
+    pub fn add_denied_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
+        let mut config = self.store.load()?;
+        let entry = config
+            .mcp_servers
+            .get_mut(name)
+            .ok_or_else(|| RegistryError::NotFound {
+                name: name.to_string(),
+            })?;
+        let denied = entry.denied_tools_mut();
+        for tool in tools {
+            if !denied.contains(tool) {
+                denied.push(tool.clone());
+            }
+        }
+        self.store.save(&config)?;
+        Ok(())
+    }
+
+    pub fn remove_denied_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
+        let mut config = self.store.load()?;
+        let entry = config
+            .mcp_servers
+            .get_mut(name)
+            .ok_or_else(|| RegistryError::NotFound {
+                name: name.to_string(),
+            })?;
+        entry.denied_tools_mut().retain(|t| !tools.contains(t));
+        self.store.save(&config)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -154,6 +196,7 @@ mod tests {
             args: vec![],
             env: BTreeMap::new(),
             allowed_tools: vec![],
+            denied_tools: vec![],
         })
     }
 
@@ -162,6 +205,7 @@ mod tests {
             url: "https://example.com".to_string(),
             headers: BTreeMap::new(),
             allowed_tools: vec![],
+            denied_tools: vec![],
         })
     }
 
@@ -318,6 +362,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec!["read".to_string(), "write".to_string()],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -386,6 +431,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec!["read".to_string()],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -449,6 +495,7 @@ mod tests {
                     "write".to_string(),
                     "delete".to_string(),
                 ],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -472,6 +519,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec!["read".to_string()],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -518,6 +566,223 @@ mod tests {
         });
 
         let result = service.remove_allowed_tools("s1", &["read".to_string()]);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn get_denied_tools_returns_list() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "s1".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec![],
+                denied_tools: vec!["delete".to_string(), "exec".to_string()],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let tools = service.get_denied_tools("s1").unwrap();
+        assert_eq!(tools, vec!["delete", "exec"]);
+    }
+
+    #[test]
+    fn get_denied_tools_empty_returns_empty() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let tools = service.get_denied_tools("s1").unwrap();
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn get_denied_tools_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let result = service.get_denied_tools("nope");
+        assert!(matches!(
+            result,
+            Err(RegistryError::NotFound { name }) if name == "nope"
+        ));
+    }
+
+    #[test]
+    fn get_denied_tools_store_error_propagates() {
+        let service = RegistryService::new(FailingStore {
+            fail_load: true,
+            config: GatewayConfig::default(),
+        });
+
+        let result = service.get_denied_tools("s1");
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn add_denied_tools_appends_new_tools() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        service
+            .add_denied_tools("s1", &["delete".to_string(), "exec".to_string()])
+            .unwrap();
+
+        let tools = service.get_denied_tools("s1").unwrap();
+        assert_eq!(tools, vec!["delete", "exec"]);
+    }
+
+    #[test]
+    fn add_denied_tools_skips_duplicates() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "s1".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec![],
+                denied_tools: vec!["delete".to_string()],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        service
+            .add_denied_tools("s1", &["delete".to_string(), "exec".to_string()])
+            .unwrap();
+
+        let tools = service.get_denied_tools("s1").unwrap();
+        assert_eq!(tools, vec!["delete", "exec"]);
+    }
+
+    #[test]
+    fn add_denied_tools_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let result = service.add_denied_tools("nope", &["delete".to_string()]);
+        assert!(matches!(
+            result,
+            Err(RegistryError::NotFound { name }) if name == "nope"
+        ));
+    }
+
+    #[test]
+    fn add_denied_tools_store_error_propagates() {
+        let service = RegistryService::new(FailingStore {
+            fail_load: true,
+            config: GatewayConfig::default(),
+        });
+
+        let result = service.add_denied_tools("s1", &["delete".to_string()]);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn add_denied_tools_save_error_propagates() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let service = RegistryService::new(FailingStore {
+            fail_load: false,
+            config,
+        });
+
+        let result = service.add_denied_tools("s1", &["delete".to_string()]);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn remove_denied_tools_removes_specified() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "s1".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec![],
+                denied_tools: vec![
+                    "delete".to_string(),
+                    "exec".to_string(),
+                    "admin".to_string(),
+                ],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        service
+            .remove_denied_tools("s1", &["exec".to_string()])
+            .unwrap();
+
+        let tools = service.get_denied_tools("s1").unwrap();
+        assert_eq!(tools, vec!["delete", "admin"]);
+    }
+
+    #[test]
+    fn remove_denied_tools_ignores_missing() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "s1".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec![],
+                denied_tools: vec!["delete".to_string()],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        service
+            .remove_denied_tools("s1", &["nonexistent".to_string()])
+            .unwrap();
+
+        let tools = service.get_denied_tools("s1").unwrap();
+        assert_eq!(tools, vec!["delete"]);
+    }
+
+    #[test]
+    fn remove_denied_tools_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let result = service.remove_denied_tools("nope", &["delete".to_string()]);
+        assert!(matches!(
+            result,
+            Err(RegistryError::NotFound { name }) if name == "nope"
+        ));
+    }
+
+    #[test]
+    fn remove_denied_tools_store_error_propagates() {
+        let service = RegistryService::new(FailingStore {
+            fail_load: true,
+            config: GatewayConfig::default(),
+        });
+
+        let result = service.remove_denied_tools("s1", &["delete".to_string()]);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn remove_denied_tools_save_error_propagates() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let service = RegistryService::new(FailingStore {
+            fail_load: false,
+            config,
+        });
+
+        let result = service.remove_denied_tools("s1", &["delete".to_string()]);
         assert!(matches!(result, Err(RegistryError::Config(_))));
     }
 }

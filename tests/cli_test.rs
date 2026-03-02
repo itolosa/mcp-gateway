@@ -405,3 +405,104 @@ fn allowlist_add_nonexistent_server_fails() {
         .failure()
         .stderr(contains("not found"));
 }
+
+#[test]
+fn denylist_add_show_remove_lifecycle() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("denylist.json");
+    let c = config_path.to_str().unwrap_or_default();
+
+    // Add a server first
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            c,
+            "add",
+            "my-server",
+            "-t",
+            "stdio",
+            "--command",
+            "echo",
+        ])
+        .assert()
+        .success();
+
+    // Show empty denylist
+    cargo_bin_cmd!()
+        .args(["-c", c, "denylist", "show", "my-server"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+
+    // Add tools to denylist
+    cargo_bin_cmd!()
+        .args(["-c", c, "denylist", "add", "my-server", "delete", "exec"])
+        .assert()
+        .success();
+
+    // Show denylist contains the added tools
+    cargo_bin_cmd!()
+        .args(["-c", c, "denylist", "show", "my-server"])
+        .assert()
+        .success()
+        .stdout(contains("delete"))
+        .stdout(contains("exec"));
+
+    // Verify config file contains deniedTools
+    let contents = std::fs::read_to_string(&config_path).unwrap_or_else(|_| unreachable!());
+    assert!(contents.contains("deniedTools"));
+    assert!(contents.contains("delete"));
+    assert!(contents.contains("exec"));
+
+    // Remove one tool
+    cargo_bin_cmd!()
+        .args(["-c", c, "denylist", "remove", "my-server", "delete"])
+        .assert()
+        .success();
+
+    // Show only remaining tool
+    let show_output = cargo_bin_cmd!()
+        .args(["-c", c, "denylist", "show", "my-server"])
+        .output()
+        .unwrap_or_else(|_| unreachable!());
+    let stdout = String::from_utf8_lossy(&show_output.stdout);
+    assert!(stdout.contains("exec"));
+    assert!(!stdout.contains("delete"));
+}
+
+#[test]
+fn denylist_show_nonexistent_server_fails() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_path.to_str().unwrap_or_default(),
+            "denylist",
+            "show",
+            "nope",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
+fn denylist_add_nonexistent_server_fails() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_path.to_str().unwrap_or_default(),
+            "denylist",
+            "add",
+            "nope",
+            "delete",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}

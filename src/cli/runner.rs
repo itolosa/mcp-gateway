@@ -3,7 +3,8 @@ use std::future::Future;
 use std::io::Write;
 
 use crate::cli::command::{
-    AddArgs, AllowlistModifyArgs, AllowlistShowArgs, RemoveArgs, RunArgs, TransportType,
+    AddArgs, AllowlistModifyArgs, AllowlistShowArgs, DenylistModifyArgs, DenylistShowArgs,
+    RemoveArgs, RunArgs, TransportType,
 };
 use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::config::store::ConfigStore;
@@ -86,6 +87,32 @@ pub fn run_allowlist_show<S: ConfigStore>(
     Ok(())
 }
 
+pub fn run_denylist_add<S: ConfigStore>(
+    service: &RegistryService<S>,
+    args: DenylistModifyArgs,
+) -> Result<(), RegistryError> {
+    service.add_denied_tools(&args.name, &args.tools)
+}
+
+pub fn run_denylist_remove<S: ConfigStore>(
+    service: &RegistryService<S>,
+    args: DenylistModifyArgs,
+) -> Result<(), RegistryError> {
+    service.remove_denied_tools(&args.name, &args.tools)
+}
+
+pub fn run_denylist_show<S: ConfigStore>(
+    service: &RegistryService<S>,
+    args: DenylistShowArgs,
+    out: &mut impl Write,
+) -> Result<(), RegistryError> {
+    let tools = service.get_denied_tools(&args.name)?;
+    for tool in &tools {
+        let _ = writeln!(out, "{tool}");
+    }
+    Ok(())
+}
+
 pub fn run_add<S: ConfigStore>(
     service: &RegistryService<S>,
     args: AddArgs,
@@ -115,11 +142,13 @@ fn build_entry(
             args,
             env: env_vars.into_iter().collect::<BTreeMap<_, _>>(),
             allowed_tools: vec![],
+            denied_tools: vec![],
         }),
         TransportType::Http => McpServerEntry::Http(HttpConfig {
             url: url.unwrap_or_default(),
             headers: headers.into_iter().collect::<BTreeMap<_, _>>(),
             allowed_tools: vec![],
+            denied_tools: vec![],
         }),
     }
 }
@@ -184,6 +213,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             }),
         );
         config
@@ -219,6 +249,7 @@ mod tests {
                 args: vec!["server.js".to_string()],
                 env: BTreeMap::from([("KEY".to_string(), "val".to_string())]),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             })
         );
     }
@@ -248,6 +279,7 @@ mod tests {
                 url: "https://example.com".to_string(),
                 headers: BTreeMap::from([("Auth".to_string(), "tok".to_string())]),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             })
         );
     }
@@ -262,6 +294,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(initial);
@@ -298,6 +331,7 @@ mod tests {
                 args: vec!["arg".to_string()],
                 env: BTreeMap::from([("K".to_string(), "V".to_string())]),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             })
         );
     }
@@ -318,6 +352,7 @@ mod tests {
                 url: "https://x.com".to_string(),
                 headers: BTreeMap::from([("H".to_string(), "V".to_string())]),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             })
         );
     }
@@ -329,6 +364,7 @@ mod tests {
             args: vec![],
             env: BTreeMap::new(),
             allowed_tools: vec![],
+            denied_tools: vec![],
         });
         assert_eq!(describe_entry(&entry), ("stdio", "node"));
     }
@@ -339,6 +375,7 @@ mod tests {
             url: "https://example.com".to_string(),
             headers: BTreeMap::new(),
             allowed_tools: vec![],
+            denied_tools: vec![],
         });
         assert_eq!(describe_entry(&entry), ("http", "https://example.com"));
     }
@@ -363,6 +400,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             }),
         );
         config.mcp_servers.insert(
@@ -371,6 +409,7 @@ mod tests {
                 url: "https://example.com".to_string(),
                 headers: BTreeMap::new(),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -409,6 +448,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -456,6 +496,7 @@ mod tests {
                 url: "https://example.com".to_string(),
                 headers: BTreeMap::new(),
                 allowed_tools: vec![],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -555,6 +596,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec!["read".to_string(), "write".to_string()],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -594,6 +636,7 @@ mod tests {
                 args: vec![],
                 env: BTreeMap::new(),
                 allowed_tools: vec!["read".to_string(), "write".to_string()],
+                denied_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -665,6 +708,160 @@ mod tests {
         };
         let mut buf = Vec::new();
         let result = run_allowlist_show(&service, args, &mut buf);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn run_denylist_add_appends_tools() {
+        let store = FakeConfigStore::new(stdio_config("echo"));
+        let service = RegistryService::new(store);
+
+        let args = DenylistModifyArgs {
+            name: "test".to_string(),
+            tools: vec!["delete".to_string(), "exec".to_string()],
+        };
+        run_denylist_add(&service, args).unwrap();
+
+        let config = service.store().load().unwrap();
+        let entry = config.mcp_servers.get("test").unwrap();
+        assert_eq!(entry.denied_tools(), &["delete", "exec"]);
+    }
+
+    #[test]
+    fn run_denylist_add_server_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = DenylistModifyArgs {
+            name: "nope".to_string(),
+            tools: vec!["delete".to_string()],
+        };
+        let result = run_denylist_add(&service, args);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
+    }
+
+    #[test]
+    fn run_denylist_remove_removes_tools() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "test".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec![],
+                denied_tools: vec!["delete".to_string(), "exec".to_string()],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = DenylistModifyArgs {
+            name: "test".to_string(),
+            tools: vec!["delete".to_string()],
+        };
+        run_denylist_remove(&service, args).unwrap();
+
+        let config = service.store().load().unwrap();
+        let entry = config.mcp_servers.get("test").unwrap();
+        assert_eq!(entry.denied_tools(), &["exec"]);
+    }
+
+    #[test]
+    fn run_denylist_remove_server_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = DenylistModifyArgs {
+            name: "nope".to_string(),
+            tools: vec!["delete".to_string()],
+        };
+        let result = run_denylist_remove(&service, args);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
+    }
+
+    #[test]
+    fn run_denylist_show_prints_tools() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "test".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec![],
+                denied_tools: vec!["delete".to_string(), "exec".to_string()],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = DenylistShowArgs {
+            name: "test".to_string(),
+        };
+        let mut buf = Vec::new();
+        run_denylist_show(&service, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("delete"));
+        assert!(output.contains("exec"));
+    }
+
+    #[test]
+    fn run_denylist_show_empty_prints_nothing() {
+        let store = FakeConfigStore::new(stdio_config("echo"));
+        let service = RegistryService::new(store);
+
+        let args = DenylistShowArgs {
+            name: "test".to_string(),
+        };
+        let mut buf = Vec::new();
+        run_denylist_show(&service, args, &mut buf).unwrap();
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn run_denylist_show_server_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = DenylistShowArgs {
+            name: "nope".to_string(),
+        };
+        let mut buf = Vec::new();
+        let result = run_denylist_show(&service, args, &mut buf);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
+    }
+
+    #[test]
+    fn run_denylist_add_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+        let args = DenylistModifyArgs {
+            name: "test".to_string(),
+            tools: vec!["delete".to_string()],
+        };
+        let result = run_denylist_add(&service, args);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn run_denylist_remove_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+        let args = DenylistModifyArgs {
+            name: "test".to_string(),
+            tools: vec!["delete".to_string()],
+        };
+        let result = run_denylist_remove(&service, args);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn run_denylist_show_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+        let args = DenylistShowArgs {
+            name: "test".to_string(),
+        };
+        let mut buf = Vec::new();
+        let result = run_denylist_show(&service, args, &mut buf);
         assert!(matches!(result, Err(RegistryError::Config(_))));
     }
 
