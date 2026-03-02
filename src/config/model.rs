@@ -17,8 +17,6 @@ pub struct GatewayConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CliToolDef {
     pub command: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
@@ -406,16 +404,14 @@ mod tests {
         let json = r#"{
             "cliTools": {
                 "gh-pr": {
-                    "command": "gh",
-                    "args": ["pr", "list", "--repo", "{{repo}}"],
+                    "command": "/path/to/gh-pr.sh",
                     "description": "List pull requests"
                 }
             }
         }"#;
         let config: GatewayConfig = serde_json::from_str(json).unwrap();
         let tool = config.cli_tools.get("gh-pr").unwrap();
-        assert_eq!(tool.command, "gh");
-        assert_eq!(tool.args, vec!["pr", "list", "--repo", "{{repo}}"]);
+        assert_eq!(tool.command, "/path/to/gh-pr.sh");
         assert_eq!(tool.description.as_deref(), Some("List pull requests"));
     }
 
@@ -425,8 +421,7 @@ mod tests {
         config.cli_tools.insert(
             "docker-ps".to_string(),
             CliToolDef {
-                command: "docker".to_string(),
-                args: vec!["ps".to_string()],
+                command: "/scripts/docker-ps.sh".to_string(),
                 description: None,
             },
         );
@@ -443,14 +438,12 @@ mod tests {
     }
 
     #[test]
-    fn cli_tool_def_omits_empty_args_and_none_description() {
+    fn cli_tool_def_omits_none_description() {
         let def = CliToolDef {
             command: "echo".to_string(),
-            args: vec![],
             description: None,
         };
         let json = serde_json::to_string(&def).unwrap();
-        assert!(!json.contains("args"));
         assert!(!json.contains("description"));
     }
 }

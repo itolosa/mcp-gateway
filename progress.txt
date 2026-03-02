@@ -84,17 +84,18 @@ M13: Denylist with precedence over allowlist - DONE
   - 201 tests (177 unit + 18 integration + 6 E2E), all quality gates pass
   - 85 mutants tested: 74 caught, 11 unviable
 
-M14: CLI tools as MCP - DONE
-  - CliToolDef struct in config/model.rs: command, args (with {{placeholder}} templates), description
+M14: CLI tools as MCP - DONE (simplified)
+  - CliToolDef struct in config/model.rs: command + optional description (no template args)
   - GatewayConfig gains `cli_tools: BTreeMap<String, CliToolDef>` (serde: "cliTools", skip if empty)
-  - cli_tools/template.rs: extract_placeholders (valid identifiers only), render_args (substitute from JSON params)
-  - cli_tools/executor.rs: CliToolExecutor with has_tool, list_tools (auto-schema from placeholders), call_tool
-  - call_tool: tokio::process::Command (no shell — safe from injection), stdout→success, stderr→error on nonzero exit
+  - cli_tools/executor.rs: CliToolExecutor with has_tool, list_tools, call_tool
+  - Stdin-based execution: pipes full CallToolRequestParams as JSON to script's stdin
+  - Script reads stdin, writes to stdout (success) or stderr (error), exit code determines result
+  - tokio::process::Command (no shell — safe from injection)
+  - Open schema {"type": "object"} — scripts parse their own input
   - ProxyHandler gains Option<CliToolExecutor>: list_tools appends CLI tools, call_tool routes to executor
   - serve_proxy gains cli_tools parameter, main.rs constructs executor from config
-  - Docker-compat: {{.Names}} preserved literally (non-identifier not treated as placeholder)
-  - 244 tests (220 unit + 18 integration + 6 E2E), all quality gates pass
-  - 114 mutants tested: 100 caught, 14 unviable
+  - 222 tests (198 unit + 18 integration + 6 E2E), all quality gates pass
+  - 92 mutants tested: 77 caught, 15 unviable
 
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:

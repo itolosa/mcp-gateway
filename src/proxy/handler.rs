@@ -387,11 +387,10 @@ mod tests {
     fn make_cli_executor() -> CliToolExecutor {
         let mut tools = BTreeMap::new();
         tools.insert(
-            "cli-echo".to_string(),
+            "cli-cat".to_string(),
             CliToolDef {
-                command: "echo".to_string(),
-                args: vec!["cli-output".to_string()],
-                description: Some("CLI echo tool".to_string()),
+                command: "cat".to_string(),
+                description: Some("Cat stdin to stdout".to_string()),
             },
         );
         CliToolExecutor::new(tools)
@@ -405,11 +404,11 @@ mod tests {
         )
         .await;
         let result = client.list_tools(None).await.unwrap();
-        // upstream "echo" + CLI "cli-echo"
+        // upstream "echo" + CLI "cli-cat"
         assert_eq!(result.tools.len(), 2);
         let names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
         assert!(names.contains(&"echo"));
-        assert!(names.contains(&"cli-echo"));
+        assert!(names.contains(&"cli-cat"));
         drop(client);
         let _ = proxy_h.await;
         let _ = upstream_h.await;
@@ -423,7 +422,7 @@ mod tests {
         )
         .await;
         let params = CallToolRequestParams {
-            name: "cli-echo".into(),
+            name: "cli-cat".into(),
             arguments: None,
             meta: None,
             task: None,
@@ -435,7 +434,8 @@ mod tests {
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
             .unwrap_or("");
-        assert!(text.contains("cli-output"));
+        // cat echoes the JSON request from stdin
+        assert!(text.contains("cli-cat"));
         drop(client);
         let _ = proxy_h.await;
         let _ = upstream_h.await;
