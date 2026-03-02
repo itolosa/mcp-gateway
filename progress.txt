@@ -50,6 +50,18 @@ M10: HTTP upstream transport - DONE
   - 109 tests (91 unit + 12 integration + 6 E2E), all quality gates pass
   - 43 mutants tested: 32 caught, 11 unviable
 
+M11: Allowlist - config and runtime filtering - DONE
+  - ToolFilter trait in filter/mod.rs: is_tool_allowed(&self, tool_name) -> bool
+  - AllowlistFilter in filter/allowlist.rs: empty = passthrough, non-empty = only listed tools
+  - ProxyHandler<F: ToolFilter> generic over filter (compile-time DI)
+  - list_tools filters upstream results via retain()
+  - call_tool rejects blocked tools before forwarding (ErrorData::invalid_params)
+  - serve_proxy takes filter parameter, passes to ProxyHandler
+  - Config: allowed_tools field on StdioConfig/HttpConfig (serde: "allowedTools", skip if empty)
+  - McpServerEntry::allowed_tools() accessor, AllowlistFilter constructed in main.rs
+  - 119 tests (101 unit + 12 integration + 6 E2E), all quality gates pass
+  - 50 mutants tested: 39 caught, 11 unviable
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)

@@ -4,15 +4,17 @@ use rmcp::model::{
 use rmcp::service::{RequestContext, RoleClient, RoleServer, RunningService, ServiceError};
 use rmcp::{ErrorData, ServerHandler};
 
+use crate::filter::ToolFilter;
 use crate::proxy::error::ProxyError;
 
-pub struct ProxyHandler {
+pub struct ProxyHandler<F: ToolFilter> {
     upstream: RunningService<RoleClient, ()>,
+    filter: F,
 }
 
-impl ProxyHandler {
-    pub fn new(upstream: RunningService<RoleClient, ()>) -> Result<Self, ProxyError> {
-        Ok(Self { upstream })
+impl<F: ToolFilter> ProxyHandler<F> {
+    pub fn new(upstream: RunningService<RoleClient, ()>, filter: F) -> Result<Self, ProxyError> {
+        Ok(Self { upstream, filter })
     }
 
     fn upstream_server_info(&self) -> Option<&ServerInfo> {
@@ -27,7 +29,7 @@ fn service_error_to_mcp(err: ServiceError) -> ErrorData {
     }
 }
 
-impl ServerHandler for ProxyHandler {
+impl<F: ToolFilter + 'static> ServerHandler for ProxyHandler<F> {
     fn get_info(&self) -> ServerInfo {
         let upstream_info = self.upstream_server_info();
         ServerInfo {
@@ -54,10 +56,15 @@ impl ServerHandler for ProxyHandler {
         request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        self.upstream
+        let mut result = self
+            .upstream
             .list_tools(request)
             .await
-            .map_err(service_error_to_mcp)
+            .map_err(service_error_to_mcp)?;
+        result
+            .tools
+            .retain(|tool| self.filter.is_tool_allowed(tool.name.as_ref()));
+        Ok(result)
     }
 
     async fn call_tool(
@@ -65,6 +72,12 @@ impl ServerHandler for ProxyHandler {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        if !self.filter.is_tool_allowed(request.name.as_ref()) {
+            return Err(ErrorData::invalid_params(
+                format!("tool '{}' is not allowed", request.name),
+                None,
+            ));
+        }
         self.upstream
             .call_tool(request)
             .await
@@ -76,6 +89,7 @@ impl ServerHandler for ProxyHandler {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::filter::AllowlistFilter;
     use rmcp::model::{
         CallToolResult, Content, Implementation, ListToolsResult, ServerCapabilities, ServerInfo,
         Tool,
@@ -145,7 +159,9 @@ mod tests {
     /// Creates a proxy wired to a mock upstream via in-memory transport,
     /// and a client connected to the proxy (also in-memory).
     /// Returns the client and task handles for clean shutdown.
-    async fn create_proxy_client() -> (
+    async fn create_proxy_client(
+        filter: AllowlistFilter,
+    ) -> (
         RunningService<RoleClient, ()>,
         tokio::task::JoinHandle<()>,
         tokio::task::JoinHandle<()>,
@@ -162,7 +178,7 @@ mod tests {
         });
 
         let upstream_client = ().serve(upstream_client_transport).await.unwrap();
-        let proxy = ProxyHandler::new(upstream_client).unwrap();
+        let proxy = ProxyHandler::new(upstream_client, filter).unwrap();
 
         // downstream: proxy server <-> test client
         let (proxy_server_transport, proxy_client_transport) = tokio::io::duplex(4096);
@@ -193,7 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_get_info_returns_gateway_identity() {
-        let (client, upstream_h, proxy_h) = create_proxy_client().await;
+        let (client, upstream_h, proxy_h) = create_proxy_client(AllowlistFilter::new(vec![])).await;
         let info = client.peer_info().unwrap();
         assert_eq!(info.server_info.name, "mcp-gateway");
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
@@ -205,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_list_tools_forwards_upstream_tools() {
-        let (client, upstream_h, proxy_h) = create_proxy_client().await;
+        let (client, upstream_h, proxy_h) = create_proxy_client(AllowlistFilter::new(vec![])).await;
         let result = client.list_tools(None).await.unwrap();
         assert_eq!(result.tools.len(), 1);
         assert_eq!(result.tools.first().map(|t| t.name.as_ref()), Some("echo"));
@@ -216,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_call_tool_forwards_and_returns_result() {
-        let (client, upstream_h, proxy_h) = create_proxy_client().await;
+        let (client, upstream_h, proxy_h) = create_proxy_client(AllowlistFilter::new(vec![])).await;
         let params = CallToolRequestParams {
             name: "echo".into(),
             arguments: Some(serde_json::from_str(r#"{"message":"hello"}"#).unwrap()),
@@ -237,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_call_unknown_tool_returns_error() {
-        let (client, upstream_h, proxy_h) = create_proxy_client().await;
+        let (client, upstream_h, proxy_h) = create_proxy_client(AllowlistFilter::new(vec![])).await;
         let params = CallToolRequestParams {
             name: "nonexistent".into(),
             arguments: None,
@@ -246,6 +262,68 @@ mod tests {
         };
         let result = client.call_tool(params).await;
         assert!(result.is_err());
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn proxy_list_tools_filters_by_allowlist() {
+        let filter = AllowlistFilter::new(vec!["not_echo".to_string()]);
+        let (client, upstream_h, proxy_h) = create_proxy_client(filter).await;
+        let result = client.list_tools(None).await.unwrap();
+        assert!(result.tools.is_empty());
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn proxy_list_tools_allows_matching_tools() {
+        let filter = AllowlistFilter::new(vec!["echo".to_string()]);
+        let (client, upstream_h, proxy_h) = create_proxy_client(filter).await;
+        let result = client.list_tools(None).await.unwrap();
+        assert_eq!(result.tools.len(), 1);
+        assert_eq!(result.tools.first().map(|t| t.name.as_ref()), Some("echo"));
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn proxy_call_blocked_tool_returns_error() {
+        let filter = AllowlistFilter::new(vec!["not_echo".to_string()]);
+        let (client, upstream_h, proxy_h) = create_proxy_client(filter).await;
+        let params = CallToolRequestParams {
+            name: "echo".into(),
+            arguments: None,
+            meta: None,
+            task: None,
+        };
+        let result = client.call_tool(params).await;
+        assert!(result.is_err());
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn proxy_call_allowed_tool_succeeds() {
+        let filter = AllowlistFilter::new(vec!["echo".to_string()]);
+        let (client, upstream_h, proxy_h) = create_proxy_client(filter).await;
+        let params = CallToolRequestParams {
+            name: "echo".into(),
+            arguments: Some(serde_json::from_str(r#"{"message":"filtered"}"#).unwrap()),
+            meta: None,
+            task: None,
+        };
+        let result = client.call_tool(params).await.unwrap();
+        let text = result
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.as_str());
+        assert_eq!(text, Some("filtered"));
         drop(client);
         let _ = proxy_h.await;
         let _ = upstream_h.await;

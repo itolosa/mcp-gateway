@@ -86,10 +86,12 @@ fn build_entry(
             command: command.unwrap_or_default(),
             args,
             env: env_vars.into_iter().collect::<BTreeMap<_, _>>(),
+            allowed_tools: vec![],
         }),
         TransportType::Http => McpServerEntry::Http(HttpConfig {
             url: url.unwrap_or_default(),
             headers: headers.into_iter().collect::<BTreeMap<_, _>>(),
+            allowed_tools: vec![],
         }),
     }
 }
@@ -153,6 +155,7 @@ mod tests {
                 command: command.to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
+                allowed_tools: vec![],
             }),
         );
         config
@@ -187,6 +190,7 @@ mod tests {
                 command: "node".to_string(),
                 args: vec!["server.js".to_string()],
                 env: BTreeMap::from([("KEY".to_string(), "val".to_string())]),
+                allowed_tools: vec![],
             })
         );
     }
@@ -215,6 +219,7 @@ mod tests {
             &McpServerEntry::Http(HttpConfig {
                 url: "https://example.com".to_string(),
                 headers: BTreeMap::from([("Auth".to_string(), "tok".to_string())]),
+                allowed_tools: vec![],
             })
         );
     }
@@ -228,6 +233,7 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
+                allowed_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(initial);
@@ -263,6 +269,7 @@ mod tests {
                 command: "cmd".to_string(),
                 args: vec!["arg".to_string()],
                 env: BTreeMap::from([("K".to_string(), "V".to_string())]),
+                allowed_tools: vec![],
             })
         );
     }
@@ -282,6 +289,7 @@ mod tests {
             McpServerEntry::Http(HttpConfig {
                 url: "https://x.com".to_string(),
                 headers: BTreeMap::from([("H".to_string(), "V".to_string())]),
+                allowed_tools: vec![],
             })
         );
     }
@@ -292,6 +300,7 @@ mod tests {
             command: "node".to_string(),
             args: vec![],
             env: BTreeMap::new(),
+            allowed_tools: vec![],
         });
         assert_eq!(describe_entry(&entry), ("stdio", "node"));
     }
@@ -301,6 +310,7 @@ mod tests {
         let entry = McpServerEntry::Http(HttpConfig {
             url: "https://example.com".to_string(),
             headers: BTreeMap::new(),
+            allowed_tools: vec![],
         });
         assert_eq!(describe_entry(&entry), ("http", "https://example.com"));
     }
@@ -324,6 +334,7 @@ mod tests {
                 command: "node".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
+                allowed_tools: vec![],
             }),
         );
         config.mcp_servers.insert(
@@ -331,6 +342,7 @@ mod tests {
             McpServerEntry::Http(HttpConfig {
                 url: "https://example.com".to_string(),
                 headers: BTreeMap::new(),
+                allowed_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -368,6 +380,7 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
+                allowed_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -414,6 +427,7 @@ mod tests {
             McpServerEntry::Http(HttpConfig {
                 url: "https://example.com".to_string(),
                 headers: BTreeMap::new(),
+                allowed_tools: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -505,7 +519,12 @@ mod tests {
         });
 
         // Run the proxy (blocks until downstream disconnects)
-        let result = crate::proxy::runner::serve_proxy(upstream, downstream_server_t).await;
+        let result = crate::proxy::runner::serve_proxy(
+            upstream,
+            downstream_server_t,
+            crate::filter::AllowlistFilter::new(vec![]),
+        )
+        .await;
 
         let _ = upstream_handle.await;
         result

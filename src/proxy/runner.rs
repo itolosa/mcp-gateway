@@ -6,18 +6,21 @@ use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
 
 use crate::config::model::{HttpConfig, StdioConfig};
+use crate::filter::ToolFilter;
 use crate::proxy::error::ProxyError;
 use crate::proxy::handler::ProxyHandler;
 
-pub async fn serve_proxy<T, E, A>(
+pub async fn serve_proxy<T, E, A, F>(
     upstream: rmcp::service::RunningService<rmcp::RoleClient, ()>,
     downstream_transport: T,
+    filter: F,
 ) -> Result<(), ProxyError>
 where
     T: rmcp::transport::IntoTransport<rmcp::RoleServer, E, A>,
     E: std::error::Error + Send + Sync + 'static,
+    F: ToolFilter + 'static,
 {
-    let proxy = ProxyHandler::new(upstream)?;
+    let proxy = ProxyHandler::new(upstream, filter)?;
     let service =
         proxy
             .serve(downstream_transport)
@@ -63,6 +66,7 @@ pub fn create_http_transport(
 mod tests {
     use super::*;
     use crate::config::model::HttpConfig;
+    use crate::filter::AllowlistFilter;
     use rmcp::model::*;
     use rmcp::ServerHandler;
     use std::collections::BTreeMap;
@@ -73,6 +77,7 @@ mod tests {
             command: "/nonexistent/path/to/binary".to_string(),
             args: vec![],
             env: BTreeMap::new(),
+            allowed_tools: vec![],
         };
         let result = spawn_transport(&config);
         assert!(matches!(result, Err(ProxyError::UpstreamSpawn { .. })));
@@ -86,6 +91,7 @@ mod tests {
                 ("Authorization".to_string(), "Bearer token123".to_string()),
                 ("X-Custom".to_string(), "value".to_string()),
             ]),
+            allowed_tools: vec![],
         };
         let result = create_http_transport(&config);
         assert!(result.is_ok());
@@ -96,6 +102,7 @@ mod tests {
         let config = HttpConfig {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::new(),
+            allowed_tools: vec![],
         };
         let result = create_http_transport(&config);
         assert!(result.is_ok());
@@ -106,6 +113,7 @@ mod tests {
         let config = HttpConfig {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::from([("bad\nname".to_string(), "value".to_string())]),
+            allowed_tools: vec![],
         };
         let result = create_http_transport(&config);
         assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
@@ -116,6 +124,7 @@ mod tests {
         let config = HttpConfig {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::from([("X-Custom".to_string(), "bad\nvalue".to_string())]),
+            allowed_tools: vec![],
         };
         let result = create_http_transport(&config);
         assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
@@ -127,6 +136,7 @@ mod tests {
             command: "cat".to_string(),
             args: vec!["--help".to_string()],
             env: BTreeMap::from([("MY_VAR".to_string(), "value".to_string())]),
+            allowed_tools: vec![],
         };
         let result = spawn_transport(&config);
         assert!(result.is_ok());
@@ -172,7 +182,7 @@ mod tests {
         let (downstream_server_t, downstream_client_t) = tokio::io::duplex(4096);
         drop(downstream_client_t); // Close immediately
 
-        let result = serve_proxy(upstream, downstream_server_t).await;
+        let result = serve_proxy(upstream, downstream_server_t, AllowlistFilter::new(vec![])).await;
         assert!(matches!(result, Err(ProxyError::DownstreamInit { .. })));
 
         // Wait for upstream mock to shut down cleanly
@@ -194,8 +204,9 @@ mod tests {
         let upstream = ().serve(upstream_client_t).await.unwrap();
 
         // Start proxy in background
-        let proxy_handle =
-            tokio::spawn(async move { serve_proxy(upstream, downstream_server_t).await });
+        let proxy_handle = tokio::spawn(async move {
+            serve_proxy(upstream, downstream_server_t, AllowlistFilter::new(vec![])).await
+        });
 
         // Connect downstream client, verify it works, then disconnect
         let client = ().serve(downstream_client_t).await.unwrap();

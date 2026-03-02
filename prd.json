@@ -154,7 +154,7 @@
     {
       "id": 11,
       "title": "Allowlist - config and runtime filtering",
-      "status": "pending",
+      "status": "completed",
       "description": "Add allowlist configuration to GatewayConfig. Each MCP server entry gets an optional 'allowedTools' list. Create ToolFilter trait and AllowlistFilter in filter/ module. The proxy intercepts tools/list and tools/call to enforce the allowlist.",
       "acceptance_criteria": [
         "Config supports optional 'allowedTools' array per server entry",

@@ -177,6 +177,7 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec!["hello".to_string()],
                 env: std::collections::BTreeMap::new(),
+                allowed_tools: vec![],
             }),
         );
 

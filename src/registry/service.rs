@@ -111,6 +111,7 @@ mod tests {
             command: "echo".to_string(),
             args: vec![],
             env: BTreeMap::new(),
+            allowed_tools: vec![],
         })
     }
 
@@ -118,6 +119,7 @@ mod tests {
         McpServerEntry::Http(HttpConfig {
             url: "https://example.com".to_string(),
             headers: BTreeMap::new(),
+            allowed_tools: vec![],
         })
     }
 
