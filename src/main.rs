@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use clap::Parser;
 use rmcp::ServiceExt;
 
@@ -8,9 +10,11 @@ use mcp_gateway::cli::runner::{
 };
 use mcp_gateway::cli_tools::CliToolExecutor;
 use mcp_gateway::config::default_config_path;
+use mcp_gateway::config::model::McpServerEntry;
 use mcp_gateway::config::store::{ConfigStore, FileConfigStore};
 use mcp_gateway::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
 use mcp_gateway::proxy::error::ProxyError;
+use mcp_gateway::proxy::handler::{ProxyHandler, UpstreamEntry};
 use mcp_gateway::registry::service::RegistryService;
 
 #[tokio::main]
@@ -52,7 +56,7 @@ async fn main() {
                     .map_err(|e| e.to_string())
             }
         },
-        Some(Command::Run(args)) => {
+        Some(Command::Run) => {
             let gateway_config = registry.store().load().map_err(|e| e.to_string());
             match gateway_config {
                 Err(e) => Err(e),
@@ -62,71 +66,22 @@ async fn main() {
                     } else {
                         Some(CliToolExecutor::new(gw.cli_tools))
                     };
-                    let server_name = args.name.clone();
-                    run_run(&registry, args, |entry| async move {
-                        let filter = CompoundFilter::new(
-                            AllowlistFilter::new(entry.allowed_tools().to_vec()),
-                            DenylistFilter::new(entry.denied_tools().to_vec()),
-                        );
-                        match entry {
-                            mcp_gateway::config::model::McpServerEntry::Stdio(config) => {
-                                let transport =
-                                    mcp_gateway::proxy::runner::spawn_transport(&config)?;
-                                let upstream =
-                                    ().serve(transport).await.map_err(|e| {
-                                        ProxyError::UpstreamInit {
-                                            message: e.to_string(),
-                                        }
-                                    })?;
-                                mcp_gateway::proxy::runner::serve_proxy(
-                                    upstream,
-                                    rmcp::transport::io::stdio(),
-                                    filter,
-                                    cli_tools,
-                                )
-                                .await
-                            }
-                            mcp_gateway::config::model::McpServerEntry::Http(ref config)
-                                if config.auth.is_some() =>
-                            {
-                                let transport =
-                                    mcp_gateway::proxy::runner::create_oauth_http_transport(
-                                        config,
-                                        &server_name,
-                                    )
-                                    .await?;
-                                let upstream =
-                                    ().serve(transport).await.map_err(|e| {
-                                        ProxyError::UpstreamInit {
-                                            message: e.to_string(),
-                                        }
-                                    })?;
-                                mcp_gateway::proxy::runner::serve_proxy(
-                                    upstream,
-                                    rmcp::transport::io::stdio(),
-                                    filter,
-                                    cli_tools,
-                                )
-                                .await
-                            }
-                            mcp_gateway::config::model::McpServerEntry::Http(config) => {
-                                let transport =
-                                    mcp_gateway::proxy::runner::create_http_transport(&config)?;
-                                let upstream =
-                                    ().serve(transport).await.map_err(|e| {
-                                        ProxyError::UpstreamInit {
-                                            message: e.to_string(),
-                                        }
-                                    })?;
-                                mcp_gateway::proxy::runner::serve_proxy(
-                                    upstream,
-                                    rmcp::transport::io::stdio(),
-                                    filter,
-                                    cli_tools,
-                                )
-                                .await
-                            }
+                    run_run(&registry, |servers| async move {
+                        let mut upstreams = BTreeMap::new();
+                        for (name, entry) in servers {
+                            let filter = CompoundFilter::new(
+                                AllowlistFilter::new(entry.allowed_tools().to_vec()),
+                                DenylistFilter::new(entry.denied_tools().to_vec()),
+                            );
+                            let service = connect_upstream(&name, entry).await?;
+                            upstreams.insert(name, UpstreamEntry { service, filter });
                         }
+                        let handler = ProxyHandler::new(upstreams, cli_tools);
+                        mcp_gateway::proxy::runner::serve_proxy(
+                            handler,
+                            rmcp::transport::io::stdio(),
+                        )
+                        .await
                     })
                     .await
                     .map_err(|e| e.to_string())
@@ -138,5 +93,38 @@ async fn main() {
     if let Err(e) = result {
         eprintln!("Error: {e}");
         std::process::exit(1);
+    }
+}
+
+async fn connect_upstream(
+    name: &str,
+    entry: McpServerEntry,
+) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ProxyError> {
+    match entry {
+        McpServerEntry::Stdio(config) => {
+            let transport = mcp_gateway::proxy::runner::spawn_transport(&config)?;
+            ().serve(transport)
+                .await
+                .map_err(|e| ProxyError::UpstreamInit {
+                    message: format!("{name}: {e}"),
+                })
+        }
+        McpServerEntry::Http(ref config) if config.auth.is_some() => {
+            let transport =
+                mcp_gateway::proxy::runner::create_oauth_http_transport(config, name).await?;
+            ().serve(transport)
+                .await
+                .map_err(|e| ProxyError::UpstreamInit {
+                    message: format!("{name}: {e}"),
+                })
+        }
+        McpServerEntry::Http(config) => {
+            let transport = mcp_gateway::proxy::runner::create_http_transport(&config)?;
+            ().serve(transport)
+                .await
+                .map_err(|e| ProxyError::UpstreamInit {
+                    message: format!("{name}: {e}"),
+                })
+        }
     }
 }

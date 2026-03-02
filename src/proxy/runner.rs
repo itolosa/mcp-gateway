@@ -6,28 +6,22 @@ use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
 
-use crate::cli_tools::CliToolExecutor;
 use crate::config::model::HttpConfig;
 use crate::config::model::StdioConfig;
-use crate::filter::ToolFilter;
 use crate::oauth;
 use crate::proxy::error::ProxyError;
 use crate::proxy::handler::ProxyHandler;
 
-pub async fn serve_proxy<T, E, A, F>(
-    upstream: rmcp::service::RunningService<rmcp::RoleClient, ()>,
+pub async fn serve_proxy<T, E, A>(
+    handler: ProxyHandler,
     downstream_transport: T,
-    filter: F,
-    cli_tools: Option<CliToolExecutor>,
 ) -> Result<(), ProxyError>
 where
     T: rmcp::transport::IntoTransport<rmcp::RoleServer, E, A>,
     E: std::error::Error + Send + Sync + 'static,
-    F: ToolFilter + 'static,
 {
-    let proxy = ProxyHandler::new(upstream, filter, cli_tools)?;
     let service =
-        proxy
+        handler
             .serve(downstream_transport)
             .await
             .map_err(|e| ProxyError::DownstreamInit {
@@ -99,7 +93,7 @@ pub async fn create_oauth_http_transport(
 mod tests {
     use super::*;
     use crate::config::model::HttpConfig;
-    use crate::filter::AllowlistFilter;
+    use crate::proxy::handler::UpstreamEntry;
     use rmcp::model::*;
     use rmcp::ServerHandler;
     use std::collections::BTreeMap;
@@ -208,33 +202,42 @@ mod tests {
         }
     }
 
+    fn passthrough_filter(
+    ) -> crate::filter::CompoundFilter<crate::filter::AllowlistFilter, crate::filter::DenylistFilter>
+    {
+        crate::filter::CompoundFilter::new(
+            crate::filter::AllowlistFilter::new(vec![]),
+            crate::filter::DenylistFilter::new(vec![]),
+        )
+    }
+
     #[tokio::test]
     async fn serve_proxy_downstream_init_error() {
         let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);
 
-        // Start mock upstream server
         let upstream_handle = tokio::spawn(async move {
             let s = MinimalServer.serve(upstream_server_t).await.unwrap();
             let _ = s.waiting().await;
         });
 
-        // Connect upstream client
         let upstream = ().serve(upstream_client_t).await.unwrap();
 
-        // Create a downstream transport that immediately closes
         let (downstream_server_t, downstream_client_t) = tokio::io::duplex(4096);
-        drop(downstream_client_t); // Close immediately
+        drop(downstream_client_t);
 
-        let result = serve_proxy(
-            upstream,
-            downstream_server_t,
-            AllowlistFilter::new(vec![]),
-            None,
-        )
-        .await;
+        let mut upstreams = BTreeMap::new();
+        upstreams.insert(
+            "test".to_string(),
+            UpstreamEntry {
+                service: upstream,
+                filter: passthrough_filter(),
+            },
+        );
+        let handler = ProxyHandler::new(upstreams, None);
+
+        let result = serve_proxy(handler, downstream_server_t).await;
         assert!(matches!(result, Err(ProxyError::DownstreamInit { .. })));
 
-        // Wait for upstream mock to shut down cleanly
         let _ = upstream_handle.await;
     }
 
@@ -243,39 +246,35 @@ mod tests {
         let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);
         let (downstream_server_t, downstream_client_t) = tokio::io::duplex(4096);
 
-        // Start mock upstream server
         let upstream_handle = tokio::spawn(async move {
             let s = MinimalServer.serve(upstream_server_t).await.unwrap();
             let _ = s.waiting().await;
         });
 
-        // Connect upstream client
         let upstream = ().serve(upstream_client_t).await.unwrap();
 
-        // Start proxy in background
-        let proxy_handle = tokio::spawn(async move {
-            serve_proxy(
-                upstream,
-                downstream_server_t,
-                AllowlistFilter::new(vec![]),
-                None,
-            )
-            .await
-        });
+        let mut upstreams = BTreeMap::new();
+        upstreams.insert(
+            "test".to_string(),
+            UpstreamEntry {
+                service: upstream,
+                filter: passthrough_filter(),
+            },
+        );
+        let handler = ProxyHandler::new(upstreams, None);
 
-        // Connect downstream client, verify it works, then disconnect
+        let proxy_handle =
+            tokio::spawn(async move { serve_proxy(handler, downstream_server_t).await });
+
         let client = ().serve(downstream_client_t).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
         assert!(tools.tools.is_empty());
 
-        // Drop the client which closes the downstream transport
         drop(client);
 
-        // Proxy should exit cleanly
         let result = proxy_handle.await.unwrap();
         assert!(result.is_ok());
 
-        // Wait for upstream mock to shut down cleanly
         let _ = upstream_handle.await;
     }
 

@@ -132,6 +132,21 @@ M18: Stress, chaos, and end-to-end tests - DONE
   - 167 mutants tested: 79 caught, 84 unviable, 4 timeouts
 
 M19: Documentation - DONE
+
+M19b: Multi-server aggregation - DONE
+  - Removed RunArgs; `mcp-gateway run` (no args) connects to all registered servers
+  - New prefix module: prefix_tool_name / split_prefixed_name with `__` separator
+  - ProxyHandler rewritten: holds BTreeMap<String, UpstreamEntry> (service + per-server CompoundFilter)
+  - list_tools: iterates all upstreams, applies per-server filter on raw names, prefixes tool names, appends CLI tools unprefixed
+  - call_tool: checks CLI tools first (no prefix), then parses prefix to route to correct upstream, checks filter, strips prefix before forwarding
+  - get_info: returns gateway identity (no upstream info forwarded)
+  - serve_proxy: takes ProxyHandler directly (no more generic filter parameter)
+  - run_run: passes BTreeMap<String, McpServerEntry> to proxy closure
+  - Removed ServerNotFound error variant (no longer needed)
+  - main.rs: iterates all servers, creates transports+upstreams, builds per-server filters, constructs multi-server handler
+  - E2E tests: verify prefixed tools (echo__echo, echo-http__echo) through real gateway binary
+  - Stress tests: updated to multi-server setup with srv__echo prefixed tool calls
+  - README updated: multi-server feature, `run` command docs, tool naming convention, architecture diagram
   - README.md rewritten: elevator pitch, features, install, quick start, CLI commands table
   - Full configuration reference with annotated JSON example (stdio, http, cliTools, allowedTools, deniedTools, OAuth)
   - Architecture overview with ASCII diagram

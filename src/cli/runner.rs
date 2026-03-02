@@ -4,7 +4,7 @@ use std::io::Write;
 
 use crate::cli::command::{
     AddArgs, AllowlistModifyArgs, AllowlistShowArgs, DenylistModifyArgs, DenylistShowArgs,
-    RemoveArgs, RunArgs, TransportType,
+    RemoveArgs, TransportType,
 };
 use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::config::store::ConfigStore;
@@ -37,21 +37,15 @@ fn describe_entry(entry: &McpServerEntry) -> (&str, &str) {
 
 pub async fn run_run<S, F, Fut>(
     service: &RegistryService<S>,
-    args: RunArgs,
     run_proxy: F,
 ) -> Result<(), ProxyError>
 where
     S: ConfigStore,
-    F: FnOnce(McpServerEntry) -> Fut,
+    F: FnOnce(BTreeMap<String, McpServerEntry>) -> Fut,
     Fut: Future<Output = Result<(), ProxyError>>,
 {
     let servers = service.list_servers()?;
-    let entry = servers
-        .get(&args.name)
-        .ok_or_else(|| ProxyError::ServerNotFound {
-            name: args.name.clone(),
-        })?;
-    run_proxy(entry.clone()).await
+    run_proxy(servers).await
 }
 
 pub fn run_remove<S: ConfigStore>(
@@ -220,7 +214,7 @@ mod tests {
         config
     }
 
-    async fn noop_proxy(_entry: McpServerEntry) -> Result<(), ProxyError> {
+    async fn noop_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
         Ok(())
     }
 
@@ -481,37 +475,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_run_server_not_found() {
+    async fn run_run_empty_config_succeeds() {
         let store = FakeConfigStore::new(GatewayConfig::default());
         let service = RegistryService::new(store);
 
-        let args = RunArgs {
-            name: "nonexistent".to_string(),
-        };
-        let result = run_run(&service, args, noop_proxy).await;
-        assert!(matches!(result, Err(ProxyError::ServerNotFound { .. })));
+        let result = run_run(&service, noop_proxy).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn run_run_http_dispatches_to_proxy_runner() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
-            "remote".to_string(),
-            McpServerEntry::Http(HttpConfig {
-                url: "https://example.com".to_string(),
-                headers: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec![],
-                auth: None,
-            }),
-        );
-        let store = FakeConfigStore::new(config);
+    async fn run_run_passes_all_servers_to_proxy() {
+        let store = FakeConfigStore::new(stdio_config("node"));
         let service = RegistryService::new(store);
 
-        let args = RunArgs {
-            name: "remote".to_string(),
-        };
-        let result = run_run(&service, args, noop_proxy).await;
+        let result = run_run(&service, |servers| async move {
+            assert_eq!(servers.len(), 1);
+            assert!(servers.contains_key("test"));
+            Ok(())
+        })
+        .await;
         assert!(result.is_ok());
     }
 
@@ -519,47 +501,25 @@ mod tests {
     async fn run_run_with_store_error_propagates() {
         let service = RegistryService::new(FakeConfigStore::failing());
 
-        let args = RunArgs {
-            name: "test".to_string(),
-        };
-        let result = run_run(&service, args, noop_proxy).await;
+        let result = run_run(&service, noop_proxy).await;
         assert!(matches!(result, Err(ProxyError::Registry(_))));
     }
 
     #[tokio::test]
-    async fn run_run_stdio_dispatches_to_proxy_runner() {
+    async fn run_run_proxy_error_propagates() {
         let store = FakeConfigStore::new(stdio_config("node"));
         let service = RegistryService::new(store);
 
-        let args = RunArgs {
-            name: "test".to_string(),
-        };
-        let result = run_run(&service, args, noop_proxy).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn run_run_stdio_proxy_error_propagates() {
-        let store = FakeConfigStore::new(stdio_config("node"));
-        let service = RegistryService::new(store);
-
-        let args = RunArgs {
-            name: "test".to_string(),
-        };
-        let result = run_run(&service, args, failing_proxy).await;
+        let result = run_run(&service, failing_proxy).await;
         assert!(matches!(result, Err(ProxyError::UpstreamSpawn { .. })));
     }
 
     #[tokio::test]
-    async fn run_run_stdio_e2e_with_in_memory_proxy() {
+    async fn run_run_e2e_with_in_memory_proxy() {
         let store = FakeConfigStore::new(stdio_config("unused"));
         let service = RegistryService::new(store);
 
-        let args = RunArgs {
-            name: "test".to_string(),
-        };
-
-        let result = run_run(&service, args, e2e_proxy).await;
+        let result = run_run(&service, e2e_proxy).await;
         assert!(result.is_ok());
     }
 
@@ -871,29 +831,39 @@ mod tests {
         assert!(matches!(result, Err(RegistryError::Config(_))));
     }
 
-    async fn failing_proxy(_entry: McpServerEntry) -> Result<(), ProxyError> {
+    async fn failing_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
         Err(ProxyError::UpstreamSpawn {
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "test"),
         })
     }
 
-    async fn e2e_proxy(_entry: McpServerEntry) -> Result<(), ProxyError> {
+    async fn e2e_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
+        use crate::proxy::handler::{ProxyHandler, UpstreamEntry};
         use rmcp::ServiceExt;
 
-        // Wire up a full in-memory proxy pipeline
         let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);
         let (downstream_server_t, downstream_client_t) = tokio::io::duplex(4096);
 
-        // Start mock upstream server
         let upstream_handle = tokio::spawn(async move {
             let s = MinimalServer.serve(upstream_server_t).await.unwrap();
             let _ = s.waiting().await;
         });
 
-        // Connect upstream client
         let upstream = ().serve(upstream_client_t).await.unwrap();
 
-        // Start a client that exercises the proxy then disconnects
+        let mut upstreams = BTreeMap::new();
+        upstreams.insert(
+            "test".to_string(),
+            UpstreamEntry {
+                service: upstream,
+                filter: crate::filter::CompoundFilter::new(
+                    crate::filter::AllowlistFilter::new(vec![]),
+                    crate::filter::DenylistFilter::new(vec![]),
+                ),
+            },
+        );
+        let handler = ProxyHandler::new(upstreams, None);
+
         tokio::spawn(async move {
             let client = ().serve(downstream_client_t).await.unwrap();
             let tools = client.list_tools(None).await.unwrap();
@@ -901,14 +871,7 @@ mod tests {
             drop(client);
         });
 
-        // Run the proxy (blocks until downstream disconnects)
-        let result = crate::proxy::runner::serve_proxy(
-            upstream,
-            downstream_server_t,
-            crate::filter::AllowlistFilter::new(vec![]),
-            None,
-        )
-        .await;
+        let result = crate::proxy::runner::serve_proxy(handler, downstream_server_t).await;
 
         let _ = upstream_handle.await;
         result

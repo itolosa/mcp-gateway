@@ -5,8 +5,8 @@ mod proxy_stress {
 
     use mcp_gateway::cli_tools::CliToolExecutor;
     use mcp_gateway::config::model::CliToolDef;
-    use mcp_gateway::filter::AllowlistFilter;
-    use mcp_gateway::proxy::handler::ProxyHandler;
+    use mcp_gateway::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
+    use mcp_gateway::proxy::handler::{ProxyHandler, UpstreamEntry};
     use rmcp::model::{
         CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -133,6 +133,10 @@ mod proxy_stress {
 
     // ── Helpers ────────────────────────────────────────────────────────
 
+    fn passthrough_filter() -> CompoundFilter<AllowlistFilter, DenylistFilter> {
+        CompoundFilter::new(AllowlistFilter::new(vec![]), DenylistFilter::new(vec![]))
+    }
+
     async fn setup_proxy() -> (
         RunningService<RoleClient, ()>,
         tokio::task::JoinHandle<()>,
@@ -157,8 +161,16 @@ mod proxy_stress {
         });
 
         let upstream_client = ().serve(upstream_client_transport).await.unwrap();
-        let filter = AllowlistFilter::new(vec![]); // passthrough
-        let proxy = ProxyHandler::new(upstream_client, filter, None).unwrap();
+
+        let mut upstreams = BTreeMap::new();
+        upstreams.insert(
+            "srv".to_string(),
+            UpstreamEntry {
+                service: upstream_client,
+                filter: passthrough_filter(),
+            },
+        );
+        let proxy = ProxyHandler::new(upstreams, None);
 
         // downstream: proxy server <-> test client
         let (proxy_server_transport, proxy_client_transport) = tokio::io::duplex(4096);
@@ -174,7 +186,7 @@ mod proxy_stress {
 
     fn echo_params(msg: &str) -> CallToolRequestParams {
         CallToolRequestParams {
-            name: "echo".into(),
+            name: "srv__echo".into(),
             arguments: Some(serde_json::from_value(serde_json::json!({"message": msg})).unwrap()),
             meta: None,
             task: None,
@@ -226,7 +238,10 @@ mod proxy_stress {
             set.spawn(async move {
                 let result = c.list_tools(None).await.unwrap();
                 assert_eq!(result.tools.len(), 1);
-                assert_eq!(result.tools.first().map(|t| t.name.as_ref()), Some("echo"));
+                assert_eq!(
+                    result.tools.first().map(|t| t.name.as_ref()),
+                    Some("srv__echo")
+                );
                 // suppress unused variable warning
                 let _ = i;
             });
@@ -376,7 +391,7 @@ mod proxy_stress {
         let (client, upstream_h, proxy_h) = setup_proxy().await;
 
         let params = CallToolRequestParams {
-            name: "echo".into(),
+            name: "srv__echo".into(),
             arguments: None,
             meta: None,
             task: None,
@@ -403,8 +418,16 @@ mod proxy_stress {
         });
 
         let upstream_client = ().serve(upstream_client_t).await.unwrap();
-        let filter = AllowlistFilter::new(vec![]);
-        let proxy = ProxyHandler::new(upstream_client, filter, None).unwrap();
+
+        let mut upstreams = BTreeMap::new();
+        upstreams.insert(
+            "srv".to_string(),
+            UpstreamEntry {
+                service: upstream_client,
+                filter: passthrough_filter(),
+            },
+        );
+        let proxy = ProxyHandler::new(upstreams, None);
 
         let (proxy_server_t, mut proxy_client_t) = tokio::io::duplex(4096);
 
@@ -438,8 +461,16 @@ mod proxy_stress {
         });
 
         let upstream_client = ().serve(upstream_client_t).await.unwrap();
-        let filter = AllowlistFilter::new(vec![]);
-        let proxy = ProxyHandler::new(upstream_client, filter, None).unwrap();
+
+        let mut upstreams = BTreeMap::new();
+        upstreams.insert(
+            "srv".to_string(),
+            UpstreamEntry {
+                service: upstream_client,
+                filter: passthrough_filter(),
+            },
+        );
+        let proxy = ProxyHandler::new(upstreams, None);
 
         let (proxy_server_t, mut proxy_client_t) = tokio::io::duplex(4096);
 
@@ -491,8 +522,16 @@ mod proxy_stress {
         });
 
         let upstream_client = ().serve(upstream_client_t).await.unwrap();
-        let filter = AllowlistFilter::new(vec![]);
-        let proxy = ProxyHandler::new(upstream_client, filter, Some(cli)).unwrap();
+
+        let mut upstreams = BTreeMap::new();
+        upstreams.insert(
+            "srv".to_string(),
+            UpstreamEntry {
+                service: upstream_client,
+                filter: passthrough_filter(),
+            },
+        );
+        let proxy = ProxyHandler::new(upstreams, Some(cli));
 
         let (proxy_server_t, proxy_client_t) = tokio::io::duplex(4096);
 

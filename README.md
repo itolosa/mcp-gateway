@@ -4,7 +4,8 @@ A security proxy for [Model Context Protocol](https://modelcontextprotocol.io/) 
 
 ## Features
 
-- **Tool filtering** — allowlists and denylists control which tools the agent can see and call
+- **Multi-server aggregation** — connects to all registered servers, exposes a unified tool list with `server__tool` prefixed names
+- **Tool filtering** — per-server allowlists and denylists control which tools the agent can see and call
 - **CLI tools** — expose host commands (`gh`, `docker`, `kubectl`) as MCP tools without writing a server
 - **Stdio and HTTP** — connects to upstream servers over stdio (child process) or HTTP/SSE
 - **OAuth 2.1** — built-in authorization code flow with PKCE and automatic token refresh for HTTP upstreams
@@ -38,10 +39,10 @@ mcp-gateway denylist add my-server delete_file
 **3. Run the gateway:**
 
 ```bash
-mcp-gateway run my-server
+mcp-gateway run
 ```
 
-The gateway starts on stdio. Point your MCP client at it instead of the upstream server.
+The gateway starts on stdio, connects to all registered servers, and exposes their tools with prefixed names (e.g., `my-server__read_file`, `remote-server__search`). CLI tools are exposed without a prefix.
 
 ## CLI Commands
 
@@ -51,7 +52,7 @@ The gateway starts on stdio. Point your MCP client at it instead of the upstream
 | `add <name> -t http` | Register an HTTP server | `mcp-gateway add api -t http --url https://example.com/mcp` |
 | `list` | List all registered servers | `mcp-gateway list` |
 | `remove <name>` | Remove a registered server | `mcp-gateway remove fs` |
-| `run <name>` | Start the proxy for a server | `mcp-gateway run fs` |
+| `run` | Start the gateway for all servers | `mcp-gateway run` |
 | `allowlist add <name> <tools...>` | Allow only specific tools | `mcp-gateway allowlist add fs read_file` |
 | `allowlist remove <name> <tools...>` | Remove tools from the allowlist | `mcp-gateway allowlist remove fs read_file` |
 | `allowlist show <name>` | Show a server's allowlist | `mcp-gateway allowlist show fs` |
@@ -100,6 +101,8 @@ All state lives in a single JSON file. The CLI commands manage it for you, but h
 }
 ```
 
+**Tool naming:** When the gateway runs, each upstream tool is prefixed with its server name using `__` (double underscore) as separator: `filesystem__read_file`, `remote-api__search`. This prevents collisions between servers that expose tools with the same name. CLI tools are exposed without a prefix. Filters operate on the raw (unprefixed) tool names — you configure `allowedTools: ["read_file"]`, not `allowedTools: ["filesystem__read_file"]`.
+
 **Filtering rules:** When both lists are empty, all tools pass through. When `allowedTools` is non-empty, only those tools are visible. `deniedTools` always takes precedence — a tool in both lists is blocked.
 
 **CLI tools:** Each entry maps a tool name to a host executable. The gateway pipes the full `tools/call` request as JSON to the command's stdin. The command writes its result to stdout (success) or stderr (error); exit code 0 means success.
@@ -111,19 +114,17 @@ All state lives in a single JSON file. The CLI commands manage it for you, but h
 MCP Gateway follows a ports-and-adapters (hexagonal) architecture. The core domain has no external dependencies — transport, storage, and filtering are plugged in at the edges via generics (compile-time DI, no dynamic dispatch).
 
 ```
-┌─────────┐       stdio        ┌─────────────┐     stdio/http     ┌──────────┐
-│  Agent   │◄────────────────►│  MCP Gateway  │◄─────────────────►│ Upstream │
-│ (client) │                   │  (proxy)      │                   │  Server  │
-└─────────┘                    │               │                   └──────────┘
-                               │  ┌──────────┐ │
-                               │  │ Filter   │ │
-                               │  │ (allow/  │ │
-                               │  │  deny)   │ │
-                               │  └──────────┘ │
-                               │  ┌──────────┐ │
-                               │  │ CLI Tools│ │
-                               │  └──────────┘ │
-                               └───────────────┘
+                                                                   ┌──────────┐
+                                                  stdio/http  ┌──►│ Server A │
+┌─────────┐       stdio        ┌───────────────┐             │    └──────────┘
+│  Agent   │◄────────────────►│  MCP Gateway    │◄────────────┤
+│ (client) │                   │                │             │    ┌──────────┐
+└─────────┘                    │  Per-server    │  stdio/http  └──►│ Server B │
+                               │  filters +     │                  └──────────┘
+                               │  prefix routing │
+                               │                │
+                               │  CLI Tools     │
+                               └────────────────┘
 ```
 
 ## License

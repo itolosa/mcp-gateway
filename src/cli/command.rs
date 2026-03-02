@@ -26,14 +26,8 @@ pub enum Command {
     List,
     /// Remove a registered MCP server
     Remove(RemoveArgs),
-    /// Start the proxy for a registered MCP server
-    Run(RunArgs),
-}
-
-#[derive(Debug, Parser)]
-pub struct RunArgs {
-    /// Name of the server to proxy
-    pub name: String,
+    /// Start the gateway proxy for all registered MCP servers
+    Run,
 }
 
 #[derive(Debug, Parser)]
@@ -288,13 +282,13 @@ mod tests {
 
     #[test]
     fn parses_run() {
-        let cli = Cli::try_parse_from(["mcp-gateway", "run", "my-server"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Run(ref args)) if args.name == "my-server"));
+        let cli = Cli::try_parse_from(["mcp-gateway", "run"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Run)));
     }
 
     #[test]
-    fn run_requires_name() {
-        let result = Cli::try_parse_from(["mcp-gateway", "run"]);
+    fn run_rejects_extra_args() {
+        let result = Cli::try_parse_from(["mcp-gateway", "run", "my-server"]);
         assert!(result.is_err());
     }
 

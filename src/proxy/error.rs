@@ -4,9 +4,6 @@ use crate::registry::error::RegistryError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyError {
-    #[error("server '{name}' not found in config")]
-    ServerNotFound { name: String },
-
     #[error("failed to spawn upstream server")]
     UpstreamSpawn { source: std::io::Error },
 
@@ -40,15 +37,6 @@ impl From<OAuthError> for ProxyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn server_not_found_display() {
-        let err = ProxyError::ServerNotFound {
-            name: "test".to_string(),
-        };
-        assert!(err.to_string().contains("test"));
-        assert!(err.to_string().contains("not found"));
-    }
 
     #[test]
     fn upstream_spawn_display() {

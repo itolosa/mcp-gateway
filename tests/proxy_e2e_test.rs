@@ -122,9 +122,9 @@ mod proxy_http_e2e {
             .unwrap();
         assert!(status.success());
 
-        // Spawn the gateway proxy as a child process
+        // Spawn the gateway proxy as a child process (no server name — runs all)
         let mut cmd = tokio::process::Command::new(GATEWAY_BIN);
-        cmd.args(["-c", config_str, "run", "echo-http"]);
+        cmd.args(["-c", config_str, "run"]);
 
         let transport = TokioChildProcess::new(cmd).unwrap();
         let client = ().serve(transport).await.unwrap();
@@ -138,7 +138,11 @@ mod proxy_http_e2e {
 
         let result = client.list_tools(None).await.unwrap();
         assert_eq!(result.tools.len(), 1);
-        assert_eq!(result.tools.first().map(|t| t.name.as_ref()), Some("echo"));
+        // Tool is prefixed with server name
+        assert_eq!(
+            result.tools.first().map(|t| t.name.as_ref()),
+            Some("echo-http__echo")
+        );
 
         drop(client);
         ct.cancel();
@@ -149,7 +153,7 @@ mod proxy_http_e2e {
         let (client, _dir, ct) = spawn_gateway_http_proxy().await;
 
         let params = CallToolRequestParams {
-            name: "echo".into(),
+            name: "echo-http__echo".into(),
             arguments: Some(serde_json::from_str(r#"{"message":"hello-http"}"#).unwrap()),
             meta: None,
             task: None,
@@ -213,9 +217,9 @@ mod proxy_e2e {
             .unwrap();
         assert!(status.success());
 
-        // Spawn the gateway proxy as a child process
+        // Spawn the gateway proxy as a child process (no server name — runs all)
         let mut cmd = tokio::process::Command::new(GATEWAY_BIN);
-        cmd.args(["-c", config_str, "run", "echo"]);
+        cmd.args(["-c", config_str, "run"]);
 
         let transport = TokioChildProcess::new(cmd).unwrap();
         let client = ().serve(transport).await.unwrap();
@@ -229,7 +233,11 @@ mod proxy_e2e {
 
         let result = client.list_tools(None).await.unwrap();
         assert_eq!(result.tools.len(), 1);
-        assert_eq!(result.tools.first().map(|t| t.name.as_ref()), Some("echo"));
+        // Tool is prefixed with server name
+        assert_eq!(
+            result.tools.first().map(|t| t.name.as_ref()),
+            Some("echo__echo")
+        );
     }
 
     #[tokio::test]
@@ -237,7 +245,7 @@ mod proxy_e2e {
         let (client, _dir) = spawn_gateway_proxy().await;
 
         let params = rmcp::model::CallToolRequestParams {
-            name: "echo".into(),
+            name: "echo__echo".into(),
             arguments: Some(serde_json::from_str(r#"{"message":"hello"}"#).unwrap()),
             meta: None,
             task: None,

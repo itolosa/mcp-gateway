@@ -282,6 +282,22 @@
       ]
     },
     {
+      "id": "19b",
+      "title": "Multi-server aggregation",
+      "status": "completed",
+      "description": "Replace single-server 'mcp-gateway run <name>' with multi-server 'mcp-gateway run' (no args). The gateway connects to all registered servers and exposes a unified tool list. Tool names are prefixed with the server name using '__' (double underscore) as separator to avoid collisions. CLI tools remain unprefixed. Per-server filters operate on raw (unprefixed) names.",
+      "acceptance_criteria": [
+        "mcp-gateway run (no args) connects to all registered servers",
+        "Tool names are prefixed: {server}__{tool} (e.g., filesystem__read_file)",
+        "CLI tools are exposed without prefix",
+        "call_tool parses prefix to route to correct upstream, strips prefix before forwarding",
+        "Per-server filters operate on raw (unprefixed) names",
+        "Empty config starts with no tools (does not fail)",
+        "E2E tests verify prefixed tools through real gateway binary",
+        "All quality gates pass (fmt, clippy, 100% coverage, all mutants killed)"
+      ]
+    },
+    {
       "id": 20,
       "title": "Daemon mode (start/detach)",
       "status": "pending",
