@@ -127,7 +127,7 @@
     {
       "id": 9,
       "title": "E2E proxy test with in-memory transport",
-      "status": "pending",
+      "status": "completed",
       "description": "Write E2E tests using rmcp-in-process-transport to test the proxy without real child processes. Create a mock MCP server that implements tools/list and tools/call. Verify full request/response flow through the gateway.",
       "acceptance_criteria": [
         "Mock MCP server implements initialize, tools/list, tools/call via rmcp ServerHandler",
@@ -141,7 +141,7 @@
     {
       "id": 10,
       "title": "HTTP upstream transport",
-      "status": "pending",
+      "status": "completed",
       "description": "Extend the proxy to connect to HTTP/SSE upstream MCP servers in addition to stdio. The transport type is determined by the server config entry type (stdio vs http). Use rmcp's HTTP client transport.",
       "acceptance_criteria": [
         "HTTP server entries use rmcp HTTP/SSE client transport",

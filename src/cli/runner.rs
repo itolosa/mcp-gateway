@@ -35,11 +35,11 @@ fn describe_entry(entry: &McpServerEntry) -> (&str, &str) {
 pub async fn run_run<S, F, Fut>(
     service: &RegistryService<S>,
     args: RunArgs,
-    run_stdio_proxy: F,
+    run_proxy: F,
 ) -> Result<(), ProxyError>
 where
     S: ConfigStore,
-    F: FnOnce(StdioConfig) -> Fut,
+    F: FnOnce(McpServerEntry) -> Fut,
     Fut: Future<Output = Result<(), ProxyError>>,
 {
     let servers = service.list_servers()?;
@@ -48,10 +48,7 @@ where
         .ok_or_else(|| ProxyError::ServerNotFound {
             name: args.name.clone(),
         })?;
-    match entry {
-        McpServerEntry::Stdio(config) => run_stdio_proxy(config.clone()).await,
-        McpServerEntry::Http(_) => Err(ProxyError::UnsupportedTransport { name: args.name }),
-    }
+    run_proxy(entry.clone()).await
 }
 
 pub fn run_remove<S: ConfigStore>(
@@ -161,7 +158,7 @@ mod tests {
         config
     }
 
-    async fn noop_proxy(_config: StdioConfig) -> Result<(), ProxyError> {
+    async fn noop_proxy(_entry: McpServerEntry) -> Result<(), ProxyError> {
         Ok(())
     }
 
@@ -410,7 +407,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_run_http_unsupported() {
+    async fn run_run_http_dispatches_to_proxy_runner() {
         let mut config = GatewayConfig::default();
         config.mcp_servers.insert(
             "remote".to_string(),
@@ -426,10 +423,7 @@ mod tests {
             name: "remote".to_string(),
         };
         let result = run_run(&service, args, noop_proxy).await;
-        assert!(matches!(
-            result,
-            Err(ProxyError::UnsupportedTransport { .. })
-        ));
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -480,13 +474,13 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    async fn failing_proxy(_config: StdioConfig) -> Result<(), ProxyError> {
+    async fn failing_proxy(_entry: McpServerEntry) -> Result<(), ProxyError> {
         Err(ProxyError::UpstreamSpawn {
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "test"),
         })
     }
 
-    async fn e2e_proxy(_config: StdioConfig) -> Result<(), ProxyError> {
+    async fn e2e_proxy(_entry: McpServerEntry) -> Result<(), ProxyError> {
         use rmcp::ServiceExt;
 
         // Wire up a full in-memory proxy pipeline

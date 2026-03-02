@@ -34,6 +34,22 @@ M8: Proxy server - stdio upstream forwarding - DONE
   - 99 tests (87 unit + 12 integration), all quality gates pass
   - 39 mutants tested: 32 caught, 7 unviable
 
+M9: E2E proxy test with echo fixture server - DONE
+  - echo-mcp-server: self-contained rmcp test fixture binary (one "echo" tool)
+  - proxy_e2e_test.rs: 3 async tests (list_tools, call_tool, gateway identity)
+  - Uses TokioChildProcess + rmcp client for bidirectional MCP communication
+  - env!("CARGO_BIN_EXE_*") for compile-time binary path resolution
+  - 102 tests (87 unit + 12 integration + 3 E2E), all quality gates pass
+
+M10: HTTP upstream transport - DONE
+  - create_http_transport converts HttpConfig to StreamableHttpClientTransport<reqwest::Client>
+  - Header validation via http::HeaderName/HeaderValue (ProxyError::HttpTransport on failure)
+  - run_run refactored: FnOnce(McpServerEntry) -> Fut (transport dispatch in composition root)
+  - Removed UnsupportedTransport error variant (exhaustive match in main.rs)
+  - E2E tests: in-process axum HTTP MCP server + gateway child process + rmcp client
+  - 109 tests (91 unit + 12 integration + 6 E2E), all quality gates pass
+  - 43 mutants tested: 32 caught, 11 unviable
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)

@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+
 use rmcp::transport::child_process::TokioChildProcess;
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
 
-use crate::config::model::StdioConfig;
+use crate::config::model::{HttpConfig, StdioConfig};
 use crate::proxy::error::ProxyError;
 use crate::proxy::handler::ProxyHandler;
 
@@ -34,10 +38,31 @@ pub fn spawn_transport(config: &StdioConfig) -> Result<TokioChildProcess, ProxyE
     TokioChildProcess::new(cmd).map_err(|e| ProxyError::UpstreamSpawn { source: e })
 }
 
+pub fn create_http_transport(
+    config: &HttpConfig,
+) -> Result<StreamableHttpClientTransport<reqwest::Client>, ProxyError> {
+    let mut custom_headers = HashMap::new();
+    for (key, value) in &config.headers {
+        let header_name =
+            http::HeaderName::try_from(key.as_str()).map_err(|e| ProxyError::HttpTransport {
+                message: e.to_string(),
+            })?;
+        let header_value =
+            http::HeaderValue::try_from(value.as_str()).map_err(|e| ProxyError::HttpTransport {
+                message: e.to_string(),
+            })?;
+        custom_headers.insert(header_name, header_value);
+    }
+    let transport_config = StreamableHttpClientTransportConfig::with_uri(config.url.as_str())
+        .custom_headers(custom_headers);
+    Ok(StreamableHttpClientTransport::from_config(transport_config))
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::config::model::HttpConfig;
     use rmcp::model::*;
     use rmcp::ServerHandler;
     use std::collections::BTreeMap;
@@ -51,6 +76,49 @@ mod tests {
         };
         let result = spawn_transport(&config);
         assert!(matches!(result, Err(ProxyError::UpstreamSpawn { .. })));
+    }
+
+    #[tokio::test]
+    async fn create_http_transport_valid_config_succeeds() {
+        let config = HttpConfig {
+            url: "http://localhost:8080/mcp".to_string(),
+            headers: BTreeMap::from([
+                ("Authorization".to_string(), "Bearer token123".to_string()),
+                ("X-Custom".to_string(), "value".to_string()),
+            ]),
+        };
+        let result = create_http_transport(&config);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_http_transport_empty_headers_succeeds() {
+        let config = HttpConfig {
+            url: "http://localhost:8080/mcp".to_string(),
+            headers: BTreeMap::new(),
+        };
+        let result = create_http_transport(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn create_http_transport_invalid_header_name_returns_error() {
+        let config = HttpConfig {
+            url: "http://localhost:8080/mcp".to_string(),
+            headers: BTreeMap::from([("bad\nname".to_string(), "value".to_string())]),
+        };
+        let result = create_http_transport(&config);
+        assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
+    }
+
+    #[test]
+    fn create_http_transport_invalid_header_value_returns_error() {
+        let config = HttpConfig {
+            url: "http://localhost:8080/mcp".to_string(),
+            headers: BTreeMap::from([("X-Custom".to_string(), "bad\nvalue".to_string())]),
+        };
+        let result = create_http_transport(&config);
+        assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
     }
 
     #[tokio::test]

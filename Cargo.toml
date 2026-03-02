@@ -12,7 +12,9 @@ path = "tests/support/echo_server.rs"
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6"
-rmcp = { version = "0.17", features = ["client", "server", "transport-io", "transport-child-process"] }
+http = "1"
+reqwest = "0.13"
+rmcp = { version = "0.17", features = ["client", "server", "transport-io", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -20,8 +22,11 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
 assert_cmd = "2"
+axum = "0.8"
 predicates = "3"
+rmcp = { version = "0.17", features = ["transport-streamable-http-server"] }
 tempfile = "3"
+tokio-util = "0.7"
 
 [lints.rust]
 unsafe_code = "forbid"

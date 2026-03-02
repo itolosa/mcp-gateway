@@ -15,8 +15,8 @@ pub enum ProxyError {
     #[error("downstream server initialization failed: {message}")]
     DownstreamInit { message: String },
 
-    #[error("server '{name}' uses http transport, which is not yet supported for proxying")]
-    UnsupportedTransport { name: String },
+    #[error("invalid HTTP header: {message}")]
+    HttpTransport { message: String },
 
     #[error(transparent)]
     Config(#[from] ConfigError),
@@ -63,12 +63,12 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_transport_display() {
-        let err = ProxyError::UnsupportedTransport {
-            name: "remote".to_string(),
+    fn http_transport_display() {
+        let err = ProxyError::HttpTransport {
+            message: "bad header".to_string(),
         };
-        assert!(err.to_string().contains("remote"));
-        assert!(err.to_string().contains("http"));
+        assert!(err.to_string().contains("bad header"));
+        assert!(err.to_string().contains("HTTP header"));
     }
 
     #[test]
