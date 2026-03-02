@@ -4,17 +4,27 @@ use rmcp::model::{
 use rmcp::service::{RequestContext, RoleClient, RoleServer, RunningService, ServiceError};
 use rmcp::{ErrorData, ServerHandler};
 
+use crate::cli_tools::CliToolExecutor;
 use crate::filter::ToolFilter;
 use crate::proxy::error::ProxyError;
 
 pub struct ProxyHandler<F: ToolFilter> {
     upstream: RunningService<RoleClient, ()>,
     filter: F,
+    cli_tools: Option<CliToolExecutor>,
 }
 
 impl<F: ToolFilter> ProxyHandler<F> {
-    pub fn new(upstream: RunningService<RoleClient, ()>, filter: F) -> Result<Self, ProxyError> {
-        Ok(Self { upstream, filter })
+    pub fn new(
+        upstream: RunningService<RoleClient, ()>,
+        filter: F,
+        cli_tools: Option<CliToolExecutor>,
+    ) -> Result<Self, ProxyError> {
+        Ok(Self {
+            upstream,
+            filter,
+            cli_tools,
+        })
     }
 
     fn upstream_server_info(&self) -> Option<&ServerInfo> {
@@ -64,6 +74,9 @@ impl<F: ToolFilter + 'static> ServerHandler for ProxyHandler<F> {
         result
             .tools
             .retain(|tool| self.filter.is_tool_allowed(tool.name.as_ref()));
+        if let Some(cli) = &self.cli_tools {
+            result.tools.extend(cli.list_tools());
+        }
         Ok(result)
     }
 
@@ -77,6 +90,11 @@ impl<F: ToolFilter + 'static> ServerHandler for ProxyHandler<F> {
                 format!("tool '{}' is not allowed", request.name),
                 None,
             ));
+        }
+        if let Some(cli) = &self.cli_tools {
+            if cli.has_tool(request.name.as_ref()) {
+                return cli.call_tool(&request).await;
+            }
         }
         self.upstream
             .call_tool(request)
@@ -178,7 +196,7 @@ mod tests {
         });
 
         let upstream_client = ().serve(upstream_client_transport).await.unwrap();
-        let proxy = ProxyHandler::new(upstream_client, filter).unwrap();
+        let proxy = ProxyHandler::new(upstream_client, filter, None).unwrap();
 
         // downstream: proxy server <-> test client
         let (proxy_server_transport, proxy_client_transport) = tokio::io::duplex(4096);
@@ -324,6 +342,126 @@ mod tests {
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str());
         assert_eq!(text, Some("filtered"));
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    // --- CLI tools integration tests ---
+
+    use crate::config::model::CliToolDef;
+    use std::collections::BTreeMap;
+
+    async fn create_proxy_client_with_cli_tools(
+        filter: AllowlistFilter,
+        cli_tools: Option<CliToolExecutor>,
+    ) -> (
+        RunningService<RoleClient, ()>,
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (upstream_server_transport, upstream_client_transport) = tokio::io::duplex(4096);
+
+        let upstream_handle = tokio::spawn(async move {
+            let s = MockUpstreamServer
+                .serve(upstream_server_transport)
+                .await
+                .unwrap();
+            let _ = s.waiting().await;
+        });
+
+        let upstream_client = ().serve(upstream_client_transport).await.unwrap();
+        let proxy = ProxyHandler::new(upstream_client, filter, cli_tools).unwrap();
+
+        let (proxy_server_transport, proxy_client_transport) = tokio::io::duplex(4096);
+
+        let proxy_handle = tokio::spawn(async move {
+            let s = proxy.serve(proxy_server_transport).await.unwrap();
+            let _ = s.waiting().await;
+        });
+
+        let client = ().serve(proxy_client_transport).await.unwrap();
+        (client, upstream_handle, proxy_handle)
+    }
+
+    fn make_cli_executor() -> CliToolExecutor {
+        let mut tools = BTreeMap::new();
+        tools.insert(
+            "cli-echo".to_string(),
+            CliToolDef {
+                command: "echo".to_string(),
+                args: vec!["cli-output".to_string()],
+                description: Some("CLI echo tool".to_string()),
+            },
+        );
+        CliToolExecutor::new(tools)
+    }
+
+    #[tokio::test]
+    async fn proxy_list_tools_includes_cli_tools() {
+        let (client, upstream_h, proxy_h) = create_proxy_client_with_cli_tools(
+            AllowlistFilter::new(vec![]),
+            Some(make_cli_executor()),
+        )
+        .await;
+        let result = client.list_tools(None).await.unwrap();
+        // upstream "echo" + CLI "cli-echo"
+        assert_eq!(result.tools.len(), 2);
+        let names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+        assert!(names.contains(&"echo"));
+        assert!(names.contains(&"cli-echo"));
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn proxy_call_tool_routes_to_cli_executor() {
+        let (client, upstream_h, proxy_h) = create_proxy_client_with_cli_tools(
+            AllowlistFilter::new(vec![]),
+            Some(make_cli_executor()),
+        )
+        .await;
+        let params = CallToolRequestParams {
+            name: "cli-echo".into(),
+            arguments: None,
+            meta: None,
+            task: None,
+        };
+        let result = client.call_tool(params).await.unwrap();
+        let text = result
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .unwrap_or("");
+        assert!(text.contains("cli-output"));
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn proxy_call_upstream_when_cli_present() {
+        let (client, upstream_h, proxy_h) = create_proxy_client_with_cli_tools(
+            AllowlistFilter::new(vec![]),
+            Some(make_cli_executor()),
+        )
+        .await;
+        // Call the upstream "echo" tool even though CLI tools are present
+        let params = CallToolRequestParams {
+            name: "echo".into(),
+            arguments: Some(serde_json::from_str(r#"{"message":"upstream"}"#).unwrap()),
+            meta: None,
+            task: None,
+        };
+        let result = client.call_tool(params).await.unwrap();
+        let text = result
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.as_str());
+        assert_eq!(text, Some("upstream"));
         drop(client);
         let _ = proxy_h.await;
         let _ = upstream_h.await;

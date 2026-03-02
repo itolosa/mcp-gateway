@@ -5,6 +5,7 @@ use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
 
+use crate::cli_tools::CliToolExecutor;
 use crate::config::model::{HttpConfig, StdioConfig};
 use crate::filter::ToolFilter;
 use crate::proxy::error::ProxyError;
@@ -14,13 +15,14 @@ pub async fn serve_proxy<T, E, A, F>(
     upstream: rmcp::service::RunningService<rmcp::RoleClient, ()>,
     downstream_transport: T,
     filter: F,
+    cli_tools: Option<CliToolExecutor>,
 ) -> Result<(), ProxyError>
 where
     T: rmcp::transport::IntoTransport<rmcp::RoleServer, E, A>,
     E: std::error::Error + Send + Sync + 'static,
     F: ToolFilter + 'static,
 {
-    let proxy = ProxyHandler::new(upstream, filter)?;
+    let proxy = ProxyHandler::new(upstream, filter, cli_tools)?;
     let service =
         proxy
             .serve(downstream_transport)
@@ -188,7 +190,13 @@ mod tests {
         let (downstream_server_t, downstream_client_t) = tokio::io::duplex(4096);
         drop(downstream_client_t); // Close immediately
 
-        let result = serve_proxy(upstream, downstream_server_t, AllowlistFilter::new(vec![])).await;
+        let result = serve_proxy(
+            upstream,
+            downstream_server_t,
+            AllowlistFilter::new(vec![]),
+            None,
+        )
+        .await;
         assert!(matches!(result, Err(ProxyError::DownstreamInit { .. })));
 
         // Wait for upstream mock to shut down cleanly
@@ -211,7 +219,13 @@ mod tests {
 
         // Start proxy in background
         let proxy_handle = tokio::spawn(async move {
-            serve_proxy(upstream, downstream_server_t, AllowlistFilter::new(vec![])).await
+            serve_proxy(
+                upstream,
+                downstream_server_t,
+                AllowlistFilter::new(vec![]),
+                None,
+            )
+            .await
         });
 
         // Connect downstream client, verify it works, then disconnect

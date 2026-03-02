@@ -900,6 +900,7 @@ mod tests {
             upstream,
             downstream_server_t,
             crate::filter::AllowlistFilter::new(vec![]),
+            None,
         )
         .await;
 

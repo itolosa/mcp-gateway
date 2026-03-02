@@ -6,8 +6,9 @@ use mcp_gateway::cli::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
     run_denylist_remove, run_denylist_show, run_list, run_remove, run_run,
 };
+use mcp_gateway::cli_tools::CliToolExecutor;
 use mcp_gateway::config::default_config_path;
-use mcp_gateway::config::store::FileConfigStore;
+use mcp_gateway::config::store::{ConfigStore, FileConfigStore};
 use mcp_gateway::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
 use mcp_gateway::proxy::error::ProxyError;
 use mcp_gateway::registry::service::RegistryService;
@@ -51,46 +52,63 @@ async fn main() {
                     .map_err(|e| e.to_string())
             }
         },
-        Some(Command::Run(args)) => run_run(&registry, args, |entry| async move {
-            let filter = CompoundFilter::new(
-                AllowlistFilter::new(entry.allowed_tools().to_vec()),
-                DenylistFilter::new(entry.denied_tools().to_vec()),
-            );
-            match entry {
-                mcp_gateway::config::model::McpServerEntry::Stdio(config) => {
-                    let transport = mcp_gateway::proxy::runner::spawn_transport(&config)?;
-                    let upstream =
-                        ().serve(transport)
-                            .await
-                            .map_err(|e| ProxyError::UpstreamInit {
-                                message: e.to_string(),
-                            })?;
-                    mcp_gateway::proxy::runner::serve_proxy(
-                        upstream,
-                        rmcp::transport::io::stdio(),
-                        filter,
-                    )
+        Some(Command::Run(args)) => {
+            let gateway_config = registry.store().load().map_err(|e| e.to_string());
+            match gateway_config {
+                Err(e) => Err(e),
+                Ok(gw) => {
+                    let cli_tools = if gw.cli_tools.is_empty() {
+                        None
+                    } else {
+                        Some(CliToolExecutor::new(gw.cli_tools))
+                    };
+                    run_run(&registry, args, |entry| async move {
+                        let filter = CompoundFilter::new(
+                            AllowlistFilter::new(entry.allowed_tools().to_vec()),
+                            DenylistFilter::new(entry.denied_tools().to_vec()),
+                        );
+                        match entry {
+                            mcp_gateway::config::model::McpServerEntry::Stdio(config) => {
+                                let transport =
+                                    mcp_gateway::proxy::runner::spawn_transport(&config)?;
+                                let upstream =
+                                    ().serve(transport).await.map_err(|e| {
+                                        ProxyError::UpstreamInit {
+                                            message: e.to_string(),
+                                        }
+                                    })?;
+                                mcp_gateway::proxy::runner::serve_proxy(
+                                    upstream,
+                                    rmcp::transport::io::stdio(),
+                                    filter,
+                                    cli_tools,
+                                )
+                                .await
+                            }
+                            mcp_gateway::config::model::McpServerEntry::Http(config) => {
+                                let transport =
+                                    mcp_gateway::proxy::runner::create_http_transport(&config)?;
+                                let upstream =
+                                    ().serve(transport).await.map_err(|e| {
+                                        ProxyError::UpstreamInit {
+                                            message: e.to_string(),
+                                        }
+                                    })?;
+                                mcp_gateway::proxy::runner::serve_proxy(
+                                    upstream,
+                                    rmcp::transport::io::stdio(),
+                                    filter,
+                                    cli_tools,
+                                )
+                                .await
+                            }
+                        }
+                    })
                     .await
-                }
-                mcp_gateway::config::model::McpServerEntry::Http(config) => {
-                    let transport = mcp_gateway::proxy::runner::create_http_transport(&config)?;
-                    let upstream =
-                        ().serve(transport)
-                            .await
-                            .map_err(|e| ProxyError::UpstreamInit {
-                                message: e.to_string(),
-                            })?;
-                    mcp_gateway::proxy::runner::serve_proxy(
-                        upstream,
-                        rmcp::transport::io::stdio(),
-                        filter,
-                    )
-                    .await
+                    .map_err(|e| e.to_string())
                 }
             }
-        })
-        .await
-        .map_err(|e| e.to_string()),
+        }
     };
 
     if let Err(e) = result {

@@ -198,7 +198,7 @@
     {
       "id": 14,
       "title": "CLI tools as MCP",
-      "status": "pending",
+      "status": "completed",
       "description": "Allow host CLI tools (e.g., gh, docker) to be exposed as MCP tool calls. Add a 'cliTools' config section that maps tool names to shell commands with argument templates. Create CliToolProvider that executes commands and returns results as MCP tool responses.",
       "acceptance_criteria": [
         "Config supports 'cliTools' section with tool name -> command mapping",
