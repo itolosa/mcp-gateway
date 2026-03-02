@@ -213,7 +213,7 @@
     {
       "id": 15,
       "title": "Unified filtering for all exposed tools",
-      "status": "pending",
+      "status": "completed",
       "description": "Apply allow/deny filtering uniformly across both upstream MCP tools and locally-defined CLI tools. Ensure the ToolFilter pipeline processes all tool sources consistently.",
       "acceptance_criteria": [
         "Allowlist/denylist applies to CLI tools the same as upstream tools",

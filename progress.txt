@@ -97,6 +97,14 @@ M14: CLI tools as MCP - DONE (simplified)
   - 222 tests (198 unit + 18 integration + 6 E2E), all quality gates pass
   - 92 mutants tested: 77 caught, 15 unviable
 
+M15: Unified filtering for all exposed tools - DONE
+  - Bug fix: list_tools now filters AFTER merging upstream + CLI tools (was filtering upstream only)
+  - call_tool already filtered uniformly — no change needed
+  - Generalized test helper: create_proxy_client_with_filter<F: ToolFilter> for testing any filter type
+  - New tests: allowlist filters CLI tools, denylist filters CLI tools, call blocked CLI tool returns error
+  - 225 tests (201 unit + 18 integration + 6 E2E), all quality gates pass
+  - 92 mutants tested: 77 caught, 15 unviable
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)
