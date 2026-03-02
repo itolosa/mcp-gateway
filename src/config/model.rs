@@ -22,6 +22,13 @@ impl McpServerEntry {
             McpServerEntry::Http(c) => &c.allowed_tools,
         }
     }
+
+    pub fn allowed_tools_mut(&mut self) -> &mut Vec<String> {
+        match self {
+            McpServerEntry::Stdio(c) => &mut c.allowed_tools,
+            McpServerEntry::Http(c) => &mut c.allowed_tools,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,5 +213,28 @@ mod tests {
             allowed_tools: vec!["b".to_string(), "c".to_string()],
         });
         assert_eq!(http.allowed_tools(), &["b", "c"]);
+    }
+
+    #[test]
+    fn allowed_tools_mut_modifies_stdio() {
+        let mut entry = McpServerEntry::Stdio(StdioConfig {
+            command: "cmd".to_string(),
+            args: vec![],
+            env: BTreeMap::new(),
+            allowed_tools: vec![],
+        });
+        entry.allowed_tools_mut().push("new_tool".to_string());
+        assert_eq!(entry.allowed_tools(), &["new_tool"]);
+    }
+
+    #[test]
+    fn allowed_tools_mut_modifies_http() {
+        let mut entry = McpServerEntry::Http(HttpConfig {
+            url: "https://x.com".to_string(),
+            headers: BTreeMap::new(),
+            allowed_tools: vec!["existing".to_string()],
+        });
+        entry.allowed_tools_mut().push("another".to_string());
+        assert_eq!(entry.allowed_tools(), &["existing", "another"]);
     }
 }

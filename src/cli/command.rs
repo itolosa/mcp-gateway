@@ -18,6 +18,8 @@ pub struct Cli {
 pub enum Command {
     /// Register a new MCP server
     Add(AddArgs),
+    /// Manage tool allowlists
+    Allowlist(AllowlistArgs),
     /// List registered MCP servers
     List,
     /// Remove a registered MCP server
@@ -35,6 +37,37 @@ pub struct RunArgs {
 #[derive(Debug, Parser)]
 pub struct RemoveArgs {
     /// Name of the server to remove
+    pub name: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct AllowlistArgs {
+    #[command(subcommand)]
+    pub action: AllowlistAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AllowlistAction {
+    /// Add tools to a server's allowlist
+    Add(AllowlistModifyArgs),
+    /// Remove tools from a server's allowlist
+    Remove(AllowlistModifyArgs),
+    /// Show a server's current allowlist
+    Show(AllowlistShowArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct AllowlistModifyArgs {
+    /// Name of the server
+    pub name: String,
+    /// Tool names to add or remove
+    #[arg(required = true)]
+    pub tools: Vec<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct AllowlistShowArgs {
+    /// Name of the server
     pub name: String,
 }
 
@@ -229,6 +262,60 @@ mod tests {
     #[test]
     fn run_requires_name() {
         let result = Cli::try_parse_from(["mcp-gateway", "run"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_allowlist_add() {
+        let cli = Cli::try_parse_from([
+            "mcp-gateway",
+            "allowlist",
+            "add",
+            "my-server",
+            "read",
+            "write",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Allowlist(AllowlistArgs {
+                action: AllowlistAction::Add(ref args),
+            })) if args.name == "my-server" && args.tools == vec!["read", "write"]
+        ));
+    }
+
+    #[test]
+    fn parses_allowlist_remove() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "allowlist", "remove", "my-server", "read"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Allowlist(AllowlistArgs {
+                action: AllowlistAction::Remove(ref args),
+            })) if args.name == "my-server" && args.tools == vec!["read"]
+        ));
+    }
+
+    #[test]
+    fn parses_allowlist_show() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "allowlist", "show", "my-server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Allowlist(AllowlistArgs {
+                action: AllowlistAction::Show(ref args),
+            })) if args.name == "my-server"
+        ));
+    }
+
+    #[test]
+    fn allowlist_add_requires_tools() {
+        let result = Cli::try_parse_from(["mcp-gateway", "allowlist", "add", "my-server"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn allowlist_remove_requires_tools() {
+        let result = Cli::try_parse_from(["mcp-gateway", "allowlist", "remove", "my-server"]);
         assert!(result.is_err());
     }
 }

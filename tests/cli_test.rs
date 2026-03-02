@@ -304,3 +304,104 @@ fn remove_nonexistent_fails() {
         .failure()
         .stderr(contains("not found"));
 }
+
+#[test]
+fn allowlist_add_show_remove_lifecycle() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("allowlist.json");
+    let c = config_path.to_str().unwrap_or_default();
+
+    // Add a server first
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            c,
+            "add",
+            "my-server",
+            "-t",
+            "stdio",
+            "--command",
+            "echo",
+        ])
+        .assert()
+        .success();
+
+    // Show empty allowlist
+    cargo_bin_cmd!()
+        .args(["-c", c, "allowlist", "show", "my-server"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+
+    // Add tools to allowlist
+    cargo_bin_cmd!()
+        .args(["-c", c, "allowlist", "add", "my-server", "read", "write"])
+        .assert()
+        .success();
+
+    // Show allowlist contains the added tools
+    cargo_bin_cmd!()
+        .args(["-c", c, "allowlist", "show", "my-server"])
+        .assert()
+        .success()
+        .stdout(contains("read"))
+        .stdout(contains("write"));
+
+    // Verify config file contains allowedTools
+    let contents = std::fs::read_to_string(&config_path).unwrap_or_else(|_| unreachable!());
+    assert!(contents.contains("allowedTools"));
+    assert!(contents.contains("read"));
+    assert!(contents.contains("write"));
+
+    // Remove one tool
+    cargo_bin_cmd!()
+        .args(["-c", c, "allowlist", "remove", "my-server", "read"])
+        .assert()
+        .success();
+
+    // Show only remaining tool
+    let show_output = cargo_bin_cmd!()
+        .args(["-c", c, "allowlist", "show", "my-server"])
+        .output()
+        .unwrap_or_else(|_| unreachable!());
+    let stdout = String::from_utf8_lossy(&show_output.stdout);
+    assert!(stdout.contains("write"));
+    assert!(!stdout.contains("read"));
+}
+
+#[test]
+fn allowlist_show_nonexistent_server_fails() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_path.to_str().unwrap_or_default(),
+            "allowlist",
+            "show",
+            "nope",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
+fn allowlist_add_nonexistent_server_fails() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_path.to_str().unwrap_or_default(),
+            "allowlist",
+            "add",
+            "nope",
+            "read",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}

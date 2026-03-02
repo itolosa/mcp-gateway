@@ -1,8 +1,11 @@
 use clap::Parser;
 use rmcp::ServiceExt;
 
-use mcp_gateway::cli::command::{Cli, Command};
-use mcp_gateway::cli::runner::{run_add, run_list, run_remove, run_run};
+use mcp_gateway::cli::command::{AllowlistAction, Cli, Command};
+use mcp_gateway::cli::runner::{
+    run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_list, run_remove,
+    run_run,
+};
 use mcp_gateway::config::default_config_path;
 use mcp_gateway::config::store::FileConfigStore;
 use mcp_gateway::filter::AllowlistFilter;
@@ -24,6 +27,18 @@ async fn main() {
             run_list(&registry, &mut std::io::stdout()).map_err(|e| e.to_string())
         }
         Some(Command::Remove(args)) => run_remove(&registry, args).map_err(|e| e.to_string()),
+        Some(Command::Allowlist(args)) => match args.action {
+            AllowlistAction::Add(modify_args) => {
+                run_allowlist_add(&registry, modify_args).map_err(|e| e.to_string())
+            }
+            AllowlistAction::Remove(modify_args) => {
+                run_allowlist_remove(&registry, modify_args).map_err(|e| e.to_string())
+            }
+            AllowlistAction::Show(show_args) => {
+                run_allowlist_show(&registry, show_args, &mut std::io::stdout())
+                    .map_err(|e| e.to_string())
+            }
+        },
         Some(Command::Run(args)) => run_run(&registry, args, |entry| async move {
             let filter = AllowlistFilter::new(entry.allowed_tools().to_vec());
             match entry {

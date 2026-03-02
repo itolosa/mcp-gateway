@@ -169,7 +169,7 @@
     {
       "id": 12,
       "title": "Allowlist - CLI management",
-      "status": "pending",
+      "status": "completed",
       "description": "Add CLI commands to manage tool allowlists: add/remove tools from a server's allowlist, and display the current allowlist. RegistryService gets methods for allowlist CRUD.",
       "acceptance_criteria": [
         "CLI command to add tools to a server's allowlist",

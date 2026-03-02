@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::Write;
 
-use crate::cli::command::{AddArgs, RemoveArgs, RunArgs, TransportType};
+use crate::cli::command::{
+    AddArgs, AllowlistModifyArgs, AllowlistShowArgs, RemoveArgs, RunArgs, TransportType,
+};
 use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::config::store::ConfigStore;
 use crate::proxy::error::ProxyError;
@@ -56,6 +58,32 @@ pub fn run_remove<S: ConfigStore>(
     args: RemoveArgs,
 ) -> Result<(), RegistryError> {
     service.remove_server(&args.name)
+}
+
+pub fn run_allowlist_add<S: ConfigStore>(
+    service: &RegistryService<S>,
+    args: AllowlistModifyArgs,
+) -> Result<(), RegistryError> {
+    service.add_allowed_tools(&args.name, &args.tools)
+}
+
+pub fn run_allowlist_remove<S: ConfigStore>(
+    service: &RegistryService<S>,
+    args: AllowlistModifyArgs,
+) -> Result<(), RegistryError> {
+    service.remove_allowed_tools(&args.name, &args.tools)
+}
+
+pub fn run_allowlist_show<S: ConfigStore>(
+    service: &RegistryService<S>,
+    args: AllowlistShowArgs,
+    out: &mut impl Write,
+) -> Result<(), RegistryError> {
+    let tools = service.get_allowed_tools(&args.name)?;
+    for tool in &tools {
+        let _ = writeln!(out, "{tool}");
+    }
+    Ok(())
 }
 
 pub fn run_add<S: ConfigStore>(
@@ -486,6 +514,158 @@ mod tests {
 
         let result = run_run(&service, args, e2e_proxy).await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_allowlist_add_appends_tools() {
+        let store = FakeConfigStore::new(stdio_config("echo"));
+        let service = RegistryService::new(store);
+
+        let args = AllowlistModifyArgs {
+            name: "test".to_string(),
+            tools: vec!["read".to_string(), "write".to_string()],
+        };
+        run_allowlist_add(&service, args).unwrap();
+
+        let config = service.store().load().unwrap();
+        let entry = config.mcp_servers.get("test").unwrap();
+        assert_eq!(entry.allowed_tools(), &["read", "write"]);
+    }
+
+    #[test]
+    fn run_allowlist_add_server_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = AllowlistModifyArgs {
+            name: "nope".to_string(),
+            tools: vec!["read".to_string()],
+        };
+        let result = run_allowlist_add(&service, args);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
+    }
+
+    #[test]
+    fn run_allowlist_remove_removes_tools() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "test".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec!["read".to_string(), "write".to_string()],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = AllowlistModifyArgs {
+            name: "test".to_string(),
+            tools: vec!["read".to_string()],
+        };
+        run_allowlist_remove(&service, args).unwrap();
+
+        let config = service.store().load().unwrap();
+        let entry = config.mcp_servers.get("test").unwrap();
+        assert_eq!(entry.allowed_tools(), &["write"]);
+    }
+
+    #[test]
+    fn run_allowlist_remove_server_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = AllowlistModifyArgs {
+            name: "nope".to_string(),
+            tools: vec!["read".to_string()],
+        };
+        let result = run_allowlist_remove(&service, args);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
+    }
+
+    #[test]
+    fn run_allowlist_show_prints_tools() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "test".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec!["read".to_string(), "write".to_string()],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = AllowlistShowArgs {
+            name: "test".to_string(),
+        };
+        let mut buf = Vec::new();
+        run_allowlist_show(&service, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("read"));
+        assert!(output.contains("write"));
+    }
+
+    #[test]
+    fn run_allowlist_show_empty_prints_nothing() {
+        let store = FakeConfigStore::new(stdio_config("echo"));
+        let service = RegistryService::new(store);
+
+        let args = AllowlistShowArgs {
+            name: "test".to_string(),
+        };
+        let mut buf = Vec::new();
+        run_allowlist_show(&service, args, &mut buf).unwrap();
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn run_allowlist_show_server_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = AllowlistShowArgs {
+            name: "nope".to_string(),
+        };
+        let mut buf = Vec::new();
+        let result = run_allowlist_show(&service, args, &mut buf);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
+    }
+
+    #[test]
+    fn run_allowlist_add_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+        let args = AllowlistModifyArgs {
+            name: "test".to_string(),
+            tools: vec!["read".to_string()],
+        };
+        let result = run_allowlist_add(&service, args);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn run_allowlist_remove_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+        let args = AllowlistModifyArgs {
+            name: "test".to_string(),
+            tools: vec!["read".to_string()],
+        };
+        let result = run_allowlist_remove(&service, args);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
+    }
+
+    #[test]
+    fn run_allowlist_show_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+        let args = AllowlistShowArgs {
+            name: "test".to_string(),
+        };
+        let mut buf = Vec::new();
+        let result = run_allowlist_show(&service, args, &mut buf);
+        assert!(matches!(result, Err(RegistryError::Config(_))));
     }
 
     async fn failing_proxy(_entry: McpServerEntry) -> Result<(), ProxyError> {

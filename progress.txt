@@ -62,6 +62,15 @@ M11: Allowlist - config and runtime filtering - DONE
   - 119 tests (101 unit + 12 integration + 6 E2E), all quality gates pass
   - 50 mutants tested: 39 caught, 11 unviable
 
+M12: Allowlist - CLI management - DONE
+  - RegistryService: get_allowed_tools, add_allowed_tools (skip duplicates), remove_allowed_tools
+  - McpServerEntry::allowed_tools_mut() for mutable access
+  - CLI: allowlist {add, remove, show} subcommands with AllowlistArgs/AllowlistAction
+  - Runner: run_allowlist_add, run_allowlist_remove, run_allowlist_show
+  - Integration test: allowlist_add_show_remove_lifecycle (full CLI lifecycle)
+  - 153 tests (132 unit + 15 integration + 6 E2E), all quality gates pass
+  - 63 mutants tested: 52 caught, 11 unviable
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)
