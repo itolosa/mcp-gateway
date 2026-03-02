@@ -119,6 +119,18 @@ M16+M17: OAuth authentication + token refresh - DONE (combined)
   - 288 tests (264 unit + 18 integration + 6 E2E), all quality gates pass
   - 167 mutants tested: 96 caught, 71 unviable
 
+M18: Stress, chaos, and end-to-end tests - DONE
+  - tests/proxy_stress_test.rs: 14 stress/chaos/edge-case integration tests
+  - Group 1 (concurrent load): 50 concurrent call_tool, 25 list + 25 call interleaved
+  - Group 2 (concurrent connections): 5 independent proxy pipelines in parallel
+  - Group 3 (upstream crash): abort upstream → call_tool error, list_tools error, proxy exits cleanly
+  - Group 4 (slow upstream): SlowServer(100ms) responds eventually, client disconnect during 10s delay exits cleanly
+  - Group 5 (edge-case input): empty tool name error, null args default, raw garbage bytes, incomplete JSON
+  - Group 6 (CLI tool stress): 20 concurrent cat-tool calls succeed, 20 concurrent false-tool calls return errors
+  - Mock servers: EchoServer (copy of existing pattern), SlowServer (configurable delay)
+  - 302 tests (264 unit + 18 integration + 6 E2E + 14 stress), all quality gates pass
+  - 167 mutants tested: 79 caught, 84 unviable, 4 timeouts
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)

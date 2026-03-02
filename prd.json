@@ -256,7 +256,7 @@
     {
       "id": 18,
       "title": "Stress, chaos, and end-to-end tests",
-      "status": "pending",
+      "status": "completed",
       "description": "Comprehensive test suite covering load testing, timeout simulation, concurrent connections, malformed input handling, and chaos scenarios (upstream crashes, network interruptions).",
       "acceptance_criteria": [
         "Load test: gateway handles N concurrent tool calls without degradation",
