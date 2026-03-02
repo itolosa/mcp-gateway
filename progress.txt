@@ -131,6 +131,13 @@ M18: Stress, chaos, and end-to-end tests - DONE
   - 302 tests (264 unit + 18 integration + 6 E2E + 14 stress), all quality gates pass
   - 167 mutants tested: 79 caught, 84 unviable, 4 timeouts
 
+M19: Documentation - DONE
+  - README.md rewritten: elevator pitch, features, install, quick start, CLI commands table
+  - Full configuration reference with annotated JSON example (stdio, http, cliTools, allowedTools, deniedTools, OAuth)
+  - Architecture overview with ASCII diagram
+  - MIT license section
+  - All quality gates pass (docs-only change, no code modified)
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)
