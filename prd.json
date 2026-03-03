@@ -300,7 +300,7 @@
     {
       "id": 20,
       "title": "Daemon mode (start/detach)",
-      "status": "pending",
+      "status": "completed",
       "description": "Allow the gateway to run as a background daemon. 'mcp-gateway start' launches the proxy in detached mode on a configurable port, writing a PID file for lifecycle management.",
       "acceptance_criteria": [
         "mcp-gateway start launches the proxy as a background process",

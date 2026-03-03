@@ -61,6 +61,51 @@ pub fn remove_pid_file(path: &Path) -> Result<(), DaemonError> {
     }
 }
 
+pub fn send_signal(pid: u32, signal: &str) -> Result<(), DaemonError> {
+    if pid == 0 {
+        return Err(DaemonError::SignalFailed {
+            message: "invalid PID 0".to_string(),
+        });
+    }
+    let success = std::process::Command::new("kill")
+        .args([&format!("-{signal}"), &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if success {
+        Ok(())
+    } else {
+        Err(DaemonError::SignalFailed {
+            message: format!("kill -{signal} {pid} failed"),
+        })
+    }
+}
+
+pub fn stop_daemon(pid_path: &Path) -> Result<(), DaemonError> {
+    let pid = match check_already_running(pid_path)? {
+        Some(pid) => pid,
+        None => return Err(DaemonError::NotRunning),
+    };
+    send_signal(pid, "TERM")?;
+    wait_for_exit(pid);
+    remove_pid_file(pid_path)
+}
+
+fn wait_for_exit(pid: u32) {
+    for _ in 0..100 {
+        if !is_process_alive(pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+pub fn daemon_status(pid_path: &Path) -> Result<Option<u32>, DaemonError> {
+    check_already_running(pid_path)
+}
+
 pub async fn check_port_available(port: u16) -> Result<(), DaemonError> {
     tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
@@ -188,6 +233,104 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = read_pid(dir.path());
         assert!(matches!(result, Err(DaemonError::PidRead { .. })));
+    }
+
+    #[test]
+    fn send_signal_success_for_self() {
+        // Signal 0 checks process existence without actually sending a signal
+        send_signal(std::process::id(), "0").unwrap();
+    }
+
+    #[test]
+    fn send_signal_rejects_pid_zero() {
+        let result = send_signal(0, "0");
+        assert!(matches!(result, Err(DaemonError::SignalFailed { .. })));
+    }
+
+    #[test]
+    fn send_signal_fails_for_invalid_pid() {
+        let result = send_signal(u32::MAX, "0");
+        assert!(matches!(result, Err(DaemonError::SignalFailed { .. })));
+    }
+
+    #[test]
+    fn stop_daemon_returns_not_running_when_no_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.pid");
+        let result = stop_daemon(&path);
+        assert!(matches!(result, Err(DaemonError::NotRunning)));
+    }
+
+    #[test]
+    fn stop_daemon_returns_not_running_when_stale_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stale.pid");
+        write_pid(&path, u32::MAX).unwrap();
+        let result = stop_daemon(&path);
+        assert!(matches!(result, Err(DaemonError::NotRunning)));
+    }
+
+    #[test]
+    fn stop_daemon_stops_running_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("running.pid");
+        // Spawn a long-lived subprocess we can kill
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        write_pid(&path, pid).unwrap();
+        assert!(is_process_alive(pid));
+        // Reap the zombie in a separate thread so stop_daemon's poll loop
+        // sees the process as gone (kill -0 fails for reaped processes)
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        stop_daemon(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn wait_for_exit_returns_immediately_for_dead_process() {
+        // u32::MAX is not a real process, so is_process_alive returns false immediately
+        wait_for_exit(u32::MAX);
+    }
+
+    #[test]
+    fn wait_for_exit_polls_until_process_dies() {
+        // Spawn a process that exits after a short delay
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.1")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        // Reap the zombie in a background thread so kill -0 fails after it exits
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        // Process is alive — wait_for_exit will poll until it exits
+        wait_for_exit(pid);
+        // After wait_for_exit returns, the process must be dead
+        assert!(!is_process_alive(pid));
+    }
+
+    #[test]
+    fn daemon_status_returns_none_when_no_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.pid");
+        let result = daemon_status(&path).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn daemon_status_returns_some_when_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("alive.pid");
+        let own_pid = std::process::id();
+        write_pid(&path, own_pid).unwrap();
+        let result = daemon_status(&path).unwrap();
+        assert_eq!(result, Some(own_pid));
     }
 
     #[test]

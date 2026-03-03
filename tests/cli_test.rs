@@ -1,6 +1,7 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use predicates::str::contains;
+use std::io::Write;
 
 #[test]
 fn no_args_succeeds() {
@@ -505,4 +506,43 @@ fn denylist_add_nonexistent_server_fails() {
         .assert()
         .failure()
         .stderr(contains("not found"));
+}
+
+#[test]
+fn stop_when_not_running_prints_error() {
+    // Use a custom PID path via HOME override so it doesn't conflict with real state
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .arg("stop")
+        .assert()
+        .failure()
+        .stderr(contains("not running"));
+}
+
+#[test]
+fn status_when_not_running_prints_not_running() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stderr(contains("not running"));
+}
+
+#[test]
+fn status_when_stale_pid_prints_not_running() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let pid_path = dir.path().join(".mcp-gateway.pid");
+    let mut file = std::fs::File::create(&pid_path).unwrap_or_else(|_| unreachable!());
+    write!(file, "{}", u32::MAX).unwrap_or_else(|_| unreachable!());
+    drop(file);
+
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stderr(contains("not running"));
 }

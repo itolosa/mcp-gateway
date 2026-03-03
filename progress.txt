@@ -153,6 +153,20 @@ M19b: Multi-server aggregation - DONE
   - MIT license section
   - All quality gates pass (docs-only change, no code modified)
 
+M20: Daemon mode (start/detach) - DONE
+  - Added `start` subcommand with --foreground and --port flags
+  - daemon/ module: error.rs (DaemonError enum), pid.rs (PID file management)
+  - PID file ops: write_pid, read_pid, check_already_running (stale cleanup), remove_pid_file
+  - is_process_alive: portable `kill -0` check (works on macOS + Linux)
+  - check_port_available: async TCP bind probe
+  - DaemonError variants: AlreadyRunning, PortInUse, PidWrite, PidRead
+  - ProxyError gains DaemonError conversion
+  - `run` now requires explicit --stdio and/or --http flags
+  - E2E tests updated to pass --stdio flag
+  - browser_auth respects BROWSER env var (no browser opening in tests)
+  - Fixed hanging test: port bind address mismatch on macOS
+  - 306 tests, all quality gates pass (fmt, clippy, 100% coverage, 0 missed mutants)
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)

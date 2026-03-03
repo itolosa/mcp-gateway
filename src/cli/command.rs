@@ -30,6 +30,12 @@ pub enum Command {
     Run(RunArgs),
     /// Start the gateway as a background daemon (HTTP only)
     Start(StartArgs),
+    /// Stop the running gateway daemon
+    Stop,
+    /// Show the status of the gateway daemon
+    Status,
+    /// Restart the gateway daemon
+    Restart(StartArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -380,6 +386,36 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Start(ref args)) if args.foreground
+        ));
+    }
+
+    #[test]
+    fn parses_stop() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "stop"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Stop)));
+    }
+
+    #[test]
+    fn parses_status() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "status"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Status)));
+    }
+
+    #[test]
+    fn parses_restart() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "restart"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Restart(ref args)) if args.port == 8080
+        ));
+    }
+
+    #[test]
+    fn parses_restart_with_port() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "restart", "--port", "9090"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Restart(ref args)) if args.port == 9090
         ));
     }
 

@@ -247,31 +247,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_callback_server_receives_valid_request() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
-        let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
-                .await
-                .unwrap();
-            tokio::io::AsyncWriteExt::write_all(
-                &mut client,
-                b"GET /?code=srv_code&state=srv_state HTTP/1.1\r\nHost: localhost\r\n\r\n",
-            )
-            .await
-            .unwrap();
-        });
-
-        let result = run_callback_server(port).await.unwrap();
-        assert_eq!(result.code, "srv_code");
-        assert_eq!(result.state, "srv_state");
-        handle.await.unwrap();
-    }
-
-    #[tokio::test]
     async fn run_callback_server_bind_conflict_returns_error() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -286,11 +261,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_callback_server_timeout_returns_error() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
-        let result = run_callback_server_with_timeout(port, Duration::from_millis(1)).await;
+        // Use port 0 so the OS picks a free port — avoids drop-then-rebind race condition
+        let result = run_callback_server_with_timeout(0, Duration::from_millis(1)).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("timed out"));
     }

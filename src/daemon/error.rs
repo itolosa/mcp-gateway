@@ -11,6 +11,12 @@ pub enum DaemonError {
 
     #[error("failed to read PID file: {message}")]
     PidRead { message: String },
+
+    #[error("gateway is not running")]
+    NotRunning,
+
+    #[error("failed to send signal: {message}")]
+    SignalFailed { message: String },
 }
 
 #[cfg(test)]
@@ -47,5 +53,20 @@ mod tests {
         };
         assert!(err.to_string().contains("corrupt file"));
         assert!(err.to_string().contains("read PID"));
+    }
+
+    #[test]
+    fn not_running_display() {
+        let err = DaemonError::NotRunning;
+        assert!(err.to_string().contains("not running"));
+    }
+
+    #[test]
+    fn signal_failed_display() {
+        let err = DaemonError::SignalFailed {
+            message: "operation not permitted".to_string(),
+        };
+        assert!(err.to_string().contains("operation not permitted"));
+        assert!(err.to_string().contains("signal"));
     }
 }

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use clap::Parser;
 use rmcp::ServiceExt;
 use tokio_util::sync::CancellationToken;
+use tracing_subscriber::EnvFilter;
 
 use mcp_gateway::cli::command::{AllowlistAction, Cli, Command, DenylistAction};
 use mcp_gateway::cli::runner::{
@@ -23,6 +24,13 @@ use mcp_gateway::registry::service::RegistryService;
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
+
     let cli = Cli::parse();
 
     let config_path = cli.config.or_else(default_config_path).unwrap_or_default();
@@ -71,19 +79,50 @@ async fn main() {
         }
         Some(Command::Start(args)) => {
             if args.foreground {
-                run_gateway(&registry, false, true, args.port)
+                run_foreground_daemon(&registry, args.port)
                     .await
                     .map_err(|e| e.to_string())
             } else {
                 start_daemon(&config_path, args.port).map_err(|e| e.to_string())
             }
         }
+        Some(Command::Stop) => {
+            let pid_path = pid::default_pid_path().unwrap_or_default();
+            pid::stop_daemon(&pid_path)
+                .map(|()| {
+                    tracing::info!("gateway stopped");
+                })
+                .map_err(|e| e.to_string())
+        }
+        Some(Command::Status) => {
+            let pid_path = pid::default_pid_path().unwrap_or_default();
+            pid::daemon_status(&pid_path)
+                .map(|status| match status {
+                    Some(p) => tracing::info!("gateway is running (PID {p})"),
+                    None => tracing::info!("gateway is not running"),
+                })
+                .map_err(|e| e.to_string())
+        }
+        Some(Command::Restart(args)) => {
+            let pid_path = pid::default_pid_path().unwrap_or_default();
+            // Stop if running, ignore NotRunning error
+            match pid::stop_daemon(&pid_path) {
+                Ok(()) => {}
+                Err(mcp_gateway::daemon::error::DaemonError::NotRunning) => {}
+                Err(e) => return print_error_and_exit(&e.to_string()),
+            }
+            start_daemon(&config_path, args.port).map_err(|e| e.to_string())
+        }
     };
 
     if let Err(e) = result {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
+        print_error_and_exit(&e);
     }
+}
+
+fn print_error_and_exit(message: &str) {
+    tracing::error!("{message}");
+    std::process::exit(1);
 }
 
 async fn run_gateway<S: ConfigStore>(
@@ -142,6 +181,35 @@ async fn build_handler(
     Ok(ProxyHandler::new(upstreams, cli_tools))
 }
 
+async fn run_foreground_daemon<S: ConfigStore>(
+    registry: &RegistryService<S>,
+    port: u16,
+) -> Result<(), ProxyError> {
+    let gateway_config = registry.store().load()?;
+    let cli_tools = if gateway_config.cli_tools.is_empty() {
+        None
+    } else {
+        Some(CliToolExecutor::new(gateway_config.cli_tools))
+    };
+    run_run(registry, |servers| async move {
+        let handler = build_handler(servers, cli_tools).await?;
+        let handler = Arc::new(handler);
+        let ct = CancellationToken::new();
+        let ct_signal = ct.clone();
+        tokio::spawn(async move {
+            let mut sigterm =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+            sigterm.recv().await;
+            ct_signal.cancel();
+        });
+        serve_proxy_http(handler, port, ct).await
+    })
+    .await
+}
+
 fn start_daemon(
     config_path: &std::path::Path,
     port: u16,
@@ -180,7 +248,7 @@ fn start_daemon(
         })?;
 
     pid::write_pid(&pid_path, child.id())?;
-    eprintln!("Gateway started on port {port} (PID {})", child.id());
+    tracing::info!("gateway started on port {port} (PID {})", child.id());
     Ok(())
 }
 
