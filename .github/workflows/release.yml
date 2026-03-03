@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: write
@@ -11,8 +11,36 @@ env:
   CARGO_TARGET_DIR: target
 
 jobs:
+  tag:
+    name: Create CalVer Tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.calver.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute CalVer tag
+        id: calver
+        run: |
+          BASE=$(date -u +%Y.%m.%d)
+          TAG="$BASE"
+          SUFFIX=0
+          while git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; do
+            SUFFIX=$((SUFFIX + 1))
+            TAG="${BASE}.${SUFFIX}"
+          done
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          git tag "${{ steps.calver.outputs.tag_name }}"
+          git push origin "${{ steps.calver.outputs.tag_name }}"
+
   build:
     name: Build ${{ matrix.target }}
+    needs: tag
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -72,7 +100,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: build
+    needs: [tag, build]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -83,5 +111,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.tag.outputs.tag_name }}
           files: artifacts/**/*.tar.gz
           generate_release_notes: true
