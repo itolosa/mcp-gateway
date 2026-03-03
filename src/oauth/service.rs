@@ -150,23 +150,25 @@ where
 }
 
 async fn browser_auth(auth_url: String, redirect_port: u16) -> Result<CallbackParams, OAuthError> {
-    let mut cmd = browser_command();
-    cmd.arg(&auth_url)
+    let browser_override = std::env::var("BROWSER");
+    let program = browser_override.as_deref().unwrap_or(default_browser());
+    let _ = std::process::Command::new(program)
+        .arg(&auth_url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let _ = cmd.spawn();
+        .stderr(std::process::Stdio::null())
+        .spawn();
     eprintln!("Visit this URL to authorize: {auth_url}");
     run_callback_server(redirect_port).await
 }
 
-fn browser_command() -> std::process::Command {
+fn default_browser() -> &'static str {
     #[cfg(target_os = "macos")]
-    return std::process::Command::new("open");
+    return "open";
     #[cfg(target_os = "windows")]
-    return std::process::Command::new("cmd");
+    return "cmd";
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    return std::process::Command::new("xdg-open");
+    return "xdg-open";
 }
 
 #[cfg(test)]
@@ -300,19 +302,19 @@ mod tests {
     }
 
     #[test]
-    fn browser_command_returns_expected_program() {
-        let cmd = browser_command();
-        let debug = format!("{cmd:?}");
+    fn default_browser_returns_expected_program() {
+        let program = default_browser();
         #[cfg(target_os = "macos")]
-        assert!(debug.contains("open"));
+        assert_eq!(program, "open");
         #[cfg(target_os = "windows")]
-        assert!(debug.contains("cmd"));
+        assert_eq!(program, "cmd");
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        assert!(debug.contains("xdg-open"));
+        assert_eq!(program, "xdg-open");
     }
 
     #[tokio::test]
     async fn browser_auth_receives_callback() {
+        std::env::set_var("BROWSER", "true");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);

@@ -27,7 +27,32 @@ pub enum Command {
     /// Remove a registered MCP server
     Remove(RemoveArgs),
     /// Start the gateway proxy for all registered MCP servers
-    Run,
+    Run(RunArgs),
+    /// Start the gateway as a background daemon (HTTP only)
+    Start(StartArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct RunArgs {
+    /// Enable stdio downstream transport
+    #[arg(long)]
+    pub stdio: bool,
+    /// Enable Streamable HTTP downstream transport
+    #[arg(long)]
+    pub http: bool,
+    /// Port for HTTP transport
+    #[arg(long, short, default_value_t = 8080)]
+    pub port: u16,
+}
+
+#[derive(Debug, Parser)]
+pub struct StartArgs {
+    /// Port for HTTP transport
+    #[arg(long, short, default_value_t = 8080)]
+    pub port: u16,
+    /// Run in foreground (used internally by daemon launcher)
+    #[arg(long, hide = true)]
+    pub foreground: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -281,15 +306,81 @@ mod tests {
     }
 
     #[test]
-    fn parses_run() {
+    fn parses_run_stdio() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--stdio"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run(ref args)) if args.stdio && !args.http
+        ));
+    }
+
+    #[test]
+    fn parses_run_http_with_port() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--http", "--port", "3000"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run(ref args)) if !args.stdio && args.http && args.port == 3000
+        ));
+    }
+
+    #[test]
+    fn parses_run_stdio_and_http() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--stdio", "--http"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run(ref args)) if args.stdio && args.http && args.port == 8080
+        ));
+    }
+
+    #[test]
+    fn parses_run_no_flags() {
         let cli = Cli::try_parse_from(["mcp-gateway", "run"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Run)));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run(ref args)) if !args.stdio && !args.http
+        ));
+    }
+
+    #[test]
+    fn run_default_port_is_8080() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--http"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run(ref args)) if args.port == 8080
+        ));
     }
 
     #[test]
     fn run_rejects_extra_args() {
         let result = Cli::try_parse_from(["mcp-gateway", "run", "my-server"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_start() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "start"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Start(ref args)) if args.port == 8080 && !args.foreground
+        ));
+    }
+
+    #[test]
+    fn parses_start_with_port() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "start", "--port", "9090"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Start(ref args)) if args.port == 9090
+        ));
+    }
+
+    #[test]
+    fn parses_start_foreground() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "start", "--foreground"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Start(ref args)) if args.foreground
+        ));
     }
 
     #[test]

@@ -16,6 +16,9 @@ pub enum ProxyError {
     #[error("invalid HTTP header: {message}")]
     HttpTransport { message: String },
 
+    #[error("port {port} is already in use: {message}")]
+    PortInUse { port: u16, message: String },
+
     #[error("OAuth authentication failed: {message}")]
     OAuthAuth { message: String },
 
@@ -69,6 +72,16 @@ mod tests {
         };
         assert!(err.to_string().contains("bad header"));
         assert!(err.to_string().contains("HTTP header"));
+    }
+
+    #[test]
+    fn port_in_use_display() {
+        let err = ProxyError::PortInUse {
+            port: 8080,
+            message: "address in use".to_string(),
+        };
+        assert!(err.to_string().contains("8080"));
+        assert!(err.to_string().contains("address in use"));
     }
 
     #[test]

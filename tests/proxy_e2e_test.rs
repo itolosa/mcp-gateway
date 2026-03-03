@@ -124,7 +124,7 @@ mod proxy_http_e2e {
 
         // Spawn the gateway proxy as a child process (no server name — runs all)
         let mut cmd = tokio::process::Command::new(GATEWAY_BIN);
-        cmd.args(["-c", config_str, "run"]);
+        cmd.args(["-c", config_str, "run", "--stdio"]);
 
         let transport = TokioChildProcess::new(cmd).unwrap();
         let client = ().serve(transport).await.unwrap();
@@ -219,7 +219,7 @@ mod proxy_e2e {
 
         // Spawn the gateway proxy as a child process (no server name — runs all)
         let mut cmd = tokio::process::Command::new(GATEWAY_BIN);
-        cmd.args(["-c", config_str, "run"]);
+        cmd.args(["-c", config_str, "run", "--stdio"]);
 
         let transport = TokioChildProcess::new(cmd).unwrap();
         let client = ().serve(transport).await.unwrap();

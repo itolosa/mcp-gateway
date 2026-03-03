@@ -23,7 +23,7 @@ pub fn run_list<S: ConfigStore>(
     let _ = writeln!(out, "{:<20} {:<10} TARGET", "NAME", "TYPE");
     for (name, entry) in &servers {
         let (server_type, target) = describe_entry(entry);
-        let _ = writeln!(out, "{:<20} {:<10} {}", name, server_type, target);
+        let _ = writeln!(out, "{name:<20} {server_type:<10} {target}");
     }
     Ok(())
 }
@@ -862,7 +862,7 @@ mod tests {
                 ),
             },
         );
-        let handler = ProxyHandler::new(upstreams, None);
+        let handler = std::sync::Arc::new(ProxyHandler::new(upstreams, None));
 
         tokio::spawn(async move {
             let client = ().serve(downstream_client_t).await.unwrap();

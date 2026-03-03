@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use rmcp::transport::auth::AuthClient;
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::model::HttpConfig;
 use crate::config::model::StdioConfig;
@@ -13,7 +17,7 @@ use crate::proxy::error::ProxyError;
 use crate::proxy::handler::ProxyHandler;
 
 pub async fn serve_proxy<T, E, A>(
-    handler: ProxyHandler,
+    handler: Arc<ProxyHandler>,
     downstream_transport: T,
 ) -> Result<(), ProxyError>
 where
@@ -29,6 +33,49 @@ where
             })?;
     let _ = service.waiting().await;
     Ok(())
+}
+
+pub(crate) async fn serve_proxy_http_on_listener(
+    handler: Arc<ProxyHandler>,
+    listener: tokio::net::TcpListener,
+    ct: CancellationToken,
+) -> Result<(), ProxyError> {
+    let config = StreamableHttpServerConfig {
+        cancellation_token: ct.clone(),
+        ..Default::default()
+    };
+    let h = handler;
+    let service: StreamableHttpService<Arc<ProxyHandler>, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(Arc::clone(&h)),
+            Arc::new(LocalSessionManager::default()),
+            config,
+        );
+    let router = axum::Router::new().nest_service("/mcp", service);
+    axum::serve(listener, router)
+        .with_graceful_shutdown(ct.cancelled_owned())
+        .await
+        .map_err(downstream_init_err)
+}
+
+fn downstream_init_err(e: impl std::fmt::Display) -> ProxyError {
+    ProxyError::DownstreamInit {
+        message: e.to_string(),
+    }
+}
+
+pub async fn serve_proxy_http(
+    handler: Arc<ProxyHandler>,
+    port: u16,
+    ct: CancellationToken,
+) -> Result<(), ProxyError> {
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+        .await
+        .map_err(|e| ProxyError::PortInUse {
+            port,
+            message: e.to_string(),
+        })?;
+    serve_proxy_http_on_listener(handler, listener, ct).await
 }
 
 pub fn spawn_transport(config: &StdioConfig) -> Result<TokioChildProcess, ProxyError> {
@@ -233,7 +280,7 @@ mod tests {
                 filter: passthrough_filter(),
             },
         );
-        let handler = ProxyHandler::new(upstreams, None);
+        let handler = Arc::new(ProxyHandler::new(upstreams, None));
 
         let result = serve_proxy(handler, downstream_server_t).await;
         assert!(matches!(result, Err(ProxyError::DownstreamInit { .. })));
@@ -261,7 +308,7 @@ mod tests {
                 filter: passthrough_filter(),
             },
         );
-        let handler = ProxyHandler::new(upstreams, None);
+        let handler = Arc::new(ProxyHandler::new(upstreams, None));
 
         let proxy_handle =
             tokio::spawn(async move { serve_proxy(handler, downstream_server_t).await });
@@ -377,5 +424,71 @@ mod tests {
         };
         let result = create_oauth_http_transport(&config, "test").await;
         assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
+    }
+
+    #[tokio::test]
+    async fn serve_proxy_http_on_listener_starts_and_cancels() {
+        let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ct = CancellationToken::new();
+        let ct2 = ct.clone();
+        let handle =
+            tokio::spawn(async move { serve_proxy_http_on_listener(handler, listener, ct2).await });
+        ct.cancel();
+        let result = handle.await.unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn serve_proxy_http_on_listener_accepts_mcp_client() {
+        let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let ct = CancellationToken::new();
+        let ct2 = ct.clone();
+        let handle =
+            tokio::spawn(async move { serve_proxy_http_on_listener(handler, listener, ct2).await });
+
+        let url = format!("http://127.0.0.1:{port}/mcp");
+        let transport_config =
+            rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
+                &*url,
+            );
+        let transport =
+            rmcp::transport::StreamableHttpClientTransport::from_config(transport_config);
+        let client: rmcp::service::RunningService<rmcp::RoleClient, ()> =
+            ().serve(transport).await.unwrap();
+        let tools = client.list_tools(None).await.unwrap();
+        assert!(tools.tools.is_empty());
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn serve_proxy_http_port_in_use_returns_error() {
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
+        let ct = CancellationToken::new();
+        let result = serve_proxy_http(handler, port, ct).await;
+        assert!(matches!(result, Err(ProxyError::PortInUse { .. })));
+    }
+
+    #[tokio::test]
+    async fn serve_proxy_http_starts_on_free_port_and_cancels() {
+        let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
+        let ct = CancellationToken::new();
+        let ct2 = ct.clone();
+        let handle = tokio::spawn(async move { serve_proxy_http(handler, 0, ct2).await });
+        ct.cancel();
+        let result = handle.await.unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn downstream_init_err_formats_message() {
+        let err = downstream_init_err("test error");
+        assert!(matches!(err, ProxyError::DownstreamInit { .. }));
+        assert!(err.to_string().contains("test error"));
     }
 }
