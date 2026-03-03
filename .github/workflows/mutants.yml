@@ -15,6 +15,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_TARGET_DIR: target
+  COVERAGE_JOBS: 2
 
 jobs:
   mutants:
