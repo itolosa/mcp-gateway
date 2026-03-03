@@ -314,7 +314,7 @@
     {
       "id": 21,
       "title": "Process management and logging",
-      "status": "pending",
+      "status": "completed",
       "description": "Add process lifecycle commands (stop, status, restart) and structured logging. DaemonManager handles PID file operations and signal delivery. Logging uses tracing crate with configurable levels.",
       "acceptance_criteria": [
         "mcp-gateway stop sends SIGTERM and waits for graceful shutdown",
@@ -329,7 +329,7 @@
     {
       "id": 22,
       "title": "Reattach to running gateway",
-      "status": "pending",
+      "status": "completed",
       "description": "Allow a new CLI session to reattach to a running gateway daemon for live inspection. 'mcp-gateway attach' connects to the running instance and streams logs or allows interactive commands.",
       "acceptance_criteria": [
         "mcp-gateway attach connects to a running daemon",

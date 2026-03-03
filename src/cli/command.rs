@@ -36,6 +36,15 @@ pub enum Command {
     Status,
     /// Restart the gateway daemon
     Restart(StartArgs),
+    /// Attach to a running gateway daemon and stream logs
+    Attach(AttachArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct AttachArgs {
+    /// Port to connect to (overrides auto-detection from port file)
+    #[arg(long, short)]
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Parser)]
@@ -525,5 +534,23 @@ mod tests {
     fn denylist_remove_requires_tools() {
         let result = Cli::try_parse_from(["mcp-gateway", "denylist", "remove", "my-server"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_attach() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "attach"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Attach(ref args)) if args.port.is_none()
+        ));
+    }
+
+    #[test]
+    fn parses_attach_with_port() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "attach", "--port", "9090"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Attach(ref args)) if args.port == Some(9090)
+        ));
     }
 }

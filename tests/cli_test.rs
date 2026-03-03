@@ -532,6 +532,17 @@ fn status_when_not_running_prints_not_running() {
 }
 
 #[test]
+fn attach_when_not_running_prints_error() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .arg("attach")
+        .assert()
+        .failure()
+        .stderr(contains("not running"));
+}
+
+#[test]
 fn status_when_stale_pid_prints_not_running() {
     let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
     let pid_path = dir.path().join(".mcp-gateway.pid");

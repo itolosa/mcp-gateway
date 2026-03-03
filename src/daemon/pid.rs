@@ -6,6 +6,34 @@ pub fn default_pid_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".mcp-gateway.pid"))
 }
 
+pub fn default_port_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".mcp-gateway.port"))
+}
+
+pub fn write_port(path: &Path, port: u16) -> Result<(), DaemonError> {
+    std::fs::write(path, port.to_string()).map_err(|e| DaemonError::PidWrite {
+        message: e.to_string(),
+    })
+}
+
+pub fn read_port(path: &Path) -> Result<Option<u16>, DaemonError> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            let port = contents
+                .trim()
+                .parse::<u16>()
+                .map_err(|e| DaemonError::PidRead {
+                    message: e.to_string(),
+                })?;
+            Ok(Some(port))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(DaemonError::PidRead {
+            message: e.to_string(),
+        }),
+    }
+}
+
 pub fn write_pid(path: &Path, pid: u32) -> Result<(), DaemonError> {
     std::fs::write(path, pid.to_string()).map_err(|e| DaemonError::PidWrite {
         message: e.to_string(),
@@ -90,7 +118,11 @@ pub fn stop_daemon(pid_path: &Path) -> Result<(), DaemonError> {
     };
     send_signal(pid, "TERM")?;
     wait_for_exit(pid);
-    remove_pid_file(pid_path)
+    remove_pid_file(pid_path)?;
+    default_port_path()
+        .map(|p| remove_pid_file(&p))
+        .transpose()?;
+    Ok(())
 }
 
 fn wait_for_exit(pid: u32) {
@@ -301,7 +333,7 @@ mod tests {
     fn wait_for_exit_polls_until_process_dies() {
         // Spawn a process that exits after a short delay
         let mut child = std::process::Command::new("sleep")
-            .arg("0.1")
+            .arg("0.05")
             .spawn()
             .unwrap();
         let pid = child.id();
@@ -331,6 +363,54 @@ mod tests {
         write_pid(&path, own_pid).unwrap();
         let result = daemon_status(&path).unwrap();
         assert_eq!(result, Some(own_pid));
+    }
+
+    #[test]
+    fn default_port_path_returns_some() {
+        let path = default_port_path();
+        assert!(path.is_some());
+        let p = path.unwrap();
+        assert!(p.to_string_lossy().contains(".mcp-gateway.port"));
+    }
+
+    #[test]
+    fn write_read_port_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.port");
+        write_port(&path, 8080).unwrap();
+        let port = read_port(&path).unwrap();
+        assert_eq!(port, Some(8080));
+    }
+
+    #[test]
+    fn read_port_returns_none_on_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.port");
+        let port = read_port(&path).unwrap();
+        assert_eq!(port, None);
+    }
+
+    #[test]
+    fn read_port_returns_error_on_malformed_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.port");
+        std::fs::write(&path, "not-a-number").unwrap();
+        let result = read_port(&path);
+        assert!(matches!(result, Err(DaemonError::PidRead { .. })));
+    }
+
+    #[test]
+    fn read_port_returns_error_on_io_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = read_port(dir.path());
+        assert!(matches!(result, Err(DaemonError::PidRead { .. })));
+    }
+
+    #[test]
+    fn write_port_to_nonexistent_dir_returns_error() {
+        let path = Path::new("/nonexistent/dir/test.port");
+        let result = write_port(path, 8080);
+        assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
     }
 
     #[test]

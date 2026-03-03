@@ -17,6 +17,9 @@ pub enum DaemonError {
 
     #[error("failed to send signal: {message}")]
     SignalFailed { message: String },
+
+    #[error("attach failed: {message}")]
+    AttachFailed { message: String },
 }
 
 #[cfg(test)]
@@ -68,5 +71,14 @@ mod tests {
         };
         assert!(err.to_string().contains("operation not permitted"));
         assert!(err.to_string().contains("signal"));
+    }
+
+    #[test]
+    fn attach_failed_display() {
+        let err = DaemonError::AttachFailed {
+            message: "connection refused".to_string(),
+        };
+        assert!(err.to_string().contains("connection refused"));
+        assert!(err.to_string().contains("attach"));
     }
 }

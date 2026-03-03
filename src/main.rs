@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use clap::Parser;
 use rmcp::ServiceExt;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
+use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
 use mcp_gateway::cli::command::{AllowlistAction, Cli, Command, DenylistAction};
@@ -15,6 +17,7 @@ use mcp_gateway::cli_tools::CliToolExecutor;
 use mcp_gateway::config::default_config_path;
 use mcp_gateway::config::model::McpServerEntry;
 use mcp_gateway::config::store::{ConfigStore, FileConfigStore};
+use mcp_gateway::daemon::log_broadcast::BroadcastLayer;
 use mcp_gateway::daemon::pid;
 use mcp_gateway::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
 use mcp_gateway::proxy::error::ProxyError;
@@ -24,12 +27,17 @@ use mcp_gateway::registry::service::RegistryService;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    let (log_sender, _) = broadcast::channel::<String>(1024);
+
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let broadcast_layer = BroadcastLayer::new(log_sender.clone());
+    let subscriber = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .with(broadcast_layer);
+    tracing::subscriber::set_global_default(subscriber)
+        .unwrap_or_else(|_| eprintln!("failed to set tracing subscriber"));
 
     let cli = Cli::parse();
 
@@ -72,14 +80,14 @@ async fn main() {
             if !args.stdio && !args.http {
                 Err("must specify at least one transport: --stdio and/or --http".to_string())
             } else {
-                run_gateway(&registry, args.stdio, args.http, args.port)
+                run_gateway(&registry, args.stdio, args.http, args.port, log_sender)
                     .await
                     .map_err(|e| e.to_string())
             }
         }
         Some(Command::Start(args)) => {
             if args.foreground {
-                run_foreground_daemon(&registry, args.port)
+                run_foreground_daemon(&registry, args.port, log_sender)
                     .await
                     .map_err(|e| e.to_string())
             } else {
@@ -113,6 +121,7 @@ async fn main() {
             }
             start_daemon(&config_path, args.port).map_err(|e| e.to_string())
         }
+        Some(Command::Attach(args)) => run_attach(args.port).await.map_err(|e| e.to_string()),
     };
 
     if let Err(e) = result {
@@ -130,6 +139,7 @@ async fn run_gateway<S: ConfigStore>(
     stdio: bool,
     http: bool,
     port: u16,
+    log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
     let cli_tools = if gateway_config.cli_tools.is_empty() {
@@ -145,10 +155,9 @@ async fn run_gateway<S: ConfigStore>(
                 let ct = CancellationToken::new();
                 let http_handler = Arc::clone(&handler);
                 let http_ct = ct.clone();
-                let http_task =
-                    tokio::spawn(
-                        async move { serve_proxy_http(http_handler, port, http_ct).await },
-                    );
+                let http_task = tokio::spawn(async move {
+                    serve_proxy_http(http_handler, port, http_ct, log_sender).await
+                });
                 let stdio_result = serve_proxy(handler, rmcp::transport::io::stdio()).await;
                 ct.cancel();
                 let _ = http_task.await;
@@ -157,7 +166,7 @@ async fn run_gateway<S: ConfigStore>(
             (true, false) => serve_proxy(handler, rmcp::transport::io::stdio()).await,
             (_, true) => {
                 let ct = CancellationToken::new();
-                serve_proxy_http(handler, port, ct).await
+                serve_proxy_http(handler, port, ct, log_sender).await
             }
             (false, false) => Ok(()),
         }
@@ -184,6 +193,7 @@ async fn build_handler(
 async fn run_foreground_daemon<S: ConfigStore>(
     registry: &RegistryService<S>,
     port: u16,
+    log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
     let cli_tools = if gateway_config.cli_tools.is_empty() {
@@ -205,9 +215,30 @@ async fn run_foreground_daemon<S: ConfigStore>(
             sigterm.recv().await;
             ct_signal.cancel();
         });
-        serve_proxy_http(handler, port, ct).await
+        serve_proxy_http(handler, port, ct, log_sender).await
     })
     .await
+}
+
+async fn run_attach(
+    port_override: Option<u16>,
+) -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+    let port = match port_override {
+        Some(p) => p,
+        None => {
+            let pid_path = pid::default_pid_path().unwrap_or_default();
+            if pid::check_already_running(&pid_path)?.is_none() {
+                return Err(mcp_gateway::daemon::error::DaemonError::NotRunning);
+            }
+            let port_path = pid::default_port_path().unwrap_or_default();
+            pid::read_port(&port_path)?.ok_or_else(|| {
+                mcp_gateway::daemon::error::DaemonError::AttachFailed {
+                    message: "port file not found".to_string(),
+                }
+            })?
+        }
+    };
+    mcp_gateway::daemon::attach::attach(port, &mut std::io::stdout()).await
 }
 
 fn start_daemon(
@@ -248,6 +279,8 @@ fn start_daemon(
         })?;
 
     pid::write_pid(&pid_path, child.id())?;
+    let port_path = pid::default_port_path().unwrap_or_default();
+    pid::write_port(&port_path, port)?;
     tracing::info!("gateway started on port {port} (PID {})", child.id());
     Ok(())
 }

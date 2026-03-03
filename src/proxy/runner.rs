@@ -1,6 +1,10 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
 
+use axum::extract::State;
+use axum::response::sse::{Event, Sse};
+use axum::routing::get;
 use rmcp::transport::auth::AuthClient;
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -8,6 +12,9 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::model::HttpConfig;
@@ -39,6 +46,7 @@ pub(crate) async fn serve_proxy_http_on_listener(
     handler: Arc<ProxyHandler>,
     listener: tokio::net::TcpListener,
     ct: CancellationToken,
+    log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let config = StreamableHttpServerConfig {
         cancellation_token: ct.clone(),
@@ -51,11 +59,25 @@ pub(crate) async fn serve_proxy_http_on_listener(
             Arc::new(LocalSessionManager::default()),
             config,
         );
-    let router = axum::Router::new().nest_service("/mcp", service);
+    let router = axum::Router::new()
+        .route("/logs", get(logs_handler))
+        .with_state(log_sender)
+        .nest_service("/mcp", service);
     axum::serve(listener, router)
         .with_graceful_shutdown(ct.cancelled_owned())
         .await
         .map_err(downstream_init_err)
+}
+
+async fn logs_handler(
+    State(sender): State<broadcast::Sender<String>>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let receiver = sender.subscribe();
+    let stream = BroadcastStream::new(receiver).filter_map(|result| match result {
+        Ok(line) => Some(Ok::<_, Infallible>(Event::default().data(line))),
+        Err(_) => None,
+    });
+    Sse::new(stream)
 }
 
 fn downstream_init_err(e: impl std::fmt::Display) -> ProxyError {
@@ -68,6 +90,7 @@ pub async fn serve_proxy_http(
     handler: Arc<ProxyHandler>,
     port: u16,
     ct: CancellationToken,
+    log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
@@ -75,7 +98,7 @@ pub async fn serve_proxy_http(
             port,
             message: e.to_string(),
         })?;
-    serve_proxy_http_on_listener(handler, listener, ct).await
+    serve_proxy_http_on_listener(handler, listener, ct, log_sender).await
 }
 
 pub fn spawn_transport(config: &StdioConfig) -> Result<TokioChildProcess, ProxyError> {
@@ -136,7 +159,7 @@ pub async fn create_oauth_http_transport(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::config::model::HttpConfig;
@@ -426,14 +449,20 @@ mod tests {
         assert!(matches!(result, Err(ProxyError::HttpTransport { .. })));
     }
 
+    fn dummy_log_sender() -> broadcast::Sender<String> {
+        broadcast::channel::<String>(16).0
+    }
+
     #[tokio::test]
     async fn serve_proxy_http_on_listener_starts_and_cancels() {
         let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ct = CancellationToken::new();
         let ct2 = ct.clone();
-        let handle =
-            tokio::spawn(async move { serve_proxy_http_on_listener(handler, listener, ct2).await });
+        let sender = dummy_log_sender();
+        let handle = tokio::spawn(async move {
+            serve_proxy_http_on_listener(handler, listener, ct2, sender).await
+        });
         ct.cancel();
         let result = handle.await.unwrap();
         assert!(result.is_ok());
@@ -446,8 +475,10 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let ct = CancellationToken::new();
         let ct2 = ct.clone();
-        let handle =
-            tokio::spawn(async move { serve_proxy_http_on_listener(handler, listener, ct2).await });
+        let sender = dummy_log_sender();
+        let handle = tokio::spawn(async move {
+            serve_proxy_http_on_listener(handler, listener, ct2, sender).await
+        });
 
         let url = format!("http://127.0.0.1:{port}/mcp");
         let transport_config =
@@ -470,7 +501,8 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
         let ct = CancellationToken::new();
-        let result = serve_proxy_http(handler, port, ct).await;
+        let sender = dummy_log_sender();
+        let result = serve_proxy_http(handler, port, ct, sender).await;
         assert!(matches!(result, Err(ProxyError::PortInUse { .. })));
     }
 
@@ -479,10 +511,106 @@ mod tests {
         let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
         let ct = CancellationToken::new();
         let ct2 = ct.clone();
-        let handle = tokio::spawn(async move { serve_proxy_http(handler, 0, ct2).await });
+        let sender = dummy_log_sender();
+        let handle = tokio::spawn(async move { serve_proxy_http(handler, 0, ct2, sender).await });
         ct.cancel();
         let result = handle.await.unwrap();
         assert!(result.is_ok());
+    }
+
+    async fn start_logs_server(
+        sender: broadcast::Sender<String>,
+    ) -> (u16, CancellationToken, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let router = axum::Router::new()
+            .route("/logs", get(logs_handler))
+            .with_state(sender);
+        let ct = CancellationToken::new();
+        let ct_inner = ct.clone();
+        let handle = tokio::spawn(async move {
+            tokio::select! {
+                result = axum::serve(listener, router) => { let _ = result; }
+                () = ct_inner.cancelled() => {}
+            }
+        });
+        (port, ct, handle)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn logs_endpoint_streams_broadcast_events() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (sender, _) = broadcast::channel::<String>(16);
+        let (port, ct, handle) = start_logs_server(sender.clone()).await;
+
+        let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        tcp.write_all(
+            b"GET /logs HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\n\r\n",
+        )
+        .await
+        .unwrap();
+
+        let mut buf = vec![0u8; 4096];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(1), tcp.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        let headers = String::from_utf8_lossy(&buf[..n]);
+        assert!(headers.contains("200 OK"));
+        assert!(headers.contains("text/event-stream"));
+
+        sender.send("test log line".to_string()).unwrap();
+        let n = tokio::time::timeout(std::time::Duration::from_secs(1), tcp.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        let body = String::from_utf8_lossy(&buf[..n]);
+        assert!(body.contains("data: test log line"));
+
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn logs_endpoint_skips_lagged_messages() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Channel capacity = 1 so sending 2 messages before reading causes lag
+        let (sender, _) = broadcast::channel::<String>(1);
+        let (port, ct, handle) = start_logs_server(sender.clone()).await;
+
+        let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        tcp.write_all(
+            b"GET /logs HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\n\r\n",
+        )
+        .await
+        .unwrap();
+
+        let mut buf = vec![0u8; 4096];
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), tcp.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Send 2 messages with capacity=1 to cause lagged error on receiver
+        sender.send("first".to_string()).unwrap();
+        sender.send("second".to_string()).unwrap();
+
+        // The lagged message is skipped; we should receive "second"
+        let n = tokio::time::timeout(std::time::Duration::from_secs(1), tcp.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        let body = String::from_utf8_lossy(&buf[..n]);
+        assert!(body.contains("data: second"));
+
+        ct.cancel();
+        let _ = handle.await;
     }
 
     #[test]

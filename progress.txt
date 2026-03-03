@@ -167,6 +167,31 @@ M20: Daemon mode (start/detach) - DONE
   - Fixed hanging test: port bind address mismatch on macOS
   - 306 tests, all quality gates pass (fmt, clippy, 100% coverage, 0 missed mutants)
 
+M21: Process management and logging - DONE
+  - Added stop, status, restart CLI commands
+  - DaemonError gains NotRunning, SignalFailed variants
+  - send_signal: kill -{signal} {pid} with PID 0 safety guard
+  - stop_daemon: SIGTERM + poll wait_for_exit (50ms * 100 iterations) + remove PID file
+  - daemon_status: thin wrapper over check_already_running
+  - Restart: stop (ignore NotRunning) then start
+  - Structured logging: tracing + tracing-subscriber with env-filter, stderr output
+  - SIGTERM handler in foreground daemon mode for graceful shutdown
+  - Fixed pre-existing flaky OAuth callback test (drop-rebind race)
+  - 321 unit + 21 integration + 14 stress tests, all quality gates pass
+  - 208 mutants tested: 98 caught, 71 unviable, 39 timeouts, 0 missed
+
+M22: Reattach to running gateway - DONE
+  - BroadcastLayer: custom tracing_subscriber::Layer that sends formatted log events to broadcast channel
+  - /logs SSE endpoint on existing axum router (alongside /mcp), streams broadcast events
+  - Port file (~/.mcp-gateway.port) written alongside PID file for auto-discovery
+  - Attach client: reqwest streaming GET to /logs, process_chunk extracts SSE data lines
+  - CLI: `attach` command with optional --port override
+  - Layered tracing subscriber: registry + env_filter + fmt_layer + broadcast_layer
+  - Reduced test timeouts (5s -> 1s) and sleeps (100ms -> 10ms) for faster execution
+  - Tuned mutants.toml: timeout_multiplier 3.0 -> 2.0, build_timeout_multiplier 2.0 -> 2.0
+  - 383 tests (341 unit + 22 integration + 6 E2E + 14 stress), all quality gates pass
+  - 224 mutants tested: 150 caught, 73 unviable, 1 timeout, 0 missed
+
 --- Roadmap revised to leverage rmcp (official Anthropic MCP SDK) ---
 Key changes from original plan:
   - M7: Integrate rmcp + tokio (foundation)
