@@ -90,11 +90,11 @@ jobs:
 
       - name: Run mutation testing (no baseline — full)
         if: steps.diff.outputs.mode == 'full'
-        run: cargo mutants -vV -j2 --baseline=skip --timeout 60
+        run: cargo mutants -vV --in-place --baseline=skip --timeout 60
 
       - name: Run mutation testing (targeted)
         if: steps.diff.outputs.mode == 'incremental'
-        run: cargo mutants -vV -j2 --baseline=skip --timeout 60 --re "${{ steps.diff.outputs.pattern }}"
+        run: cargo mutants -vV --in-place --baseline=skip --timeout 60 --re "${{ steps.diff.outputs.pattern }}"
 
       - name: Upload mutant baseline
         if: always()
