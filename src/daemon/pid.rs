@@ -58,10 +58,12 @@ pub fn read_pid(path: &Path) -> Result<Option<u32>, DaemonError> {
     }
 }
 
+fn is_valid_pid(pid: u32) -> bool {
+    pid > 0 && pid <= i32::MAX as u32
+}
+
 pub fn is_process_alive(pid: u32) -> bool {
-    // pid_t is i32; PIDs above i32::MAX wrap to negative values,
-    // which would target process groups or all processes
-    if pid == 0 || pid > i32::MAX as u32 {
+    if !is_valid_pid(pid) {
         return false;
     }
     std::process::Command::new("kill")
@@ -95,9 +97,7 @@ pub fn remove_pid_file(path: &Path) -> Result<(), DaemonError> {
 }
 
 pub fn send_signal(pid: u32, signal: &str) -> Result<(), DaemonError> {
-    // pid_t is i32; PIDs 0 or above i32::MAX are invalid and dangerous
-    // (0 = current process group, negative = other process groups)
-    if pid == 0 || pid > i32::MAX as u32 {
+    if !is_valid_pid(pid) {
         return Err(DaemonError::SignalFailed {
             message: format!("invalid PID {pid}"),
         });
@@ -429,5 +429,34 @@ mod tests {
         std::fs::write(inner.join("file"), "data").unwrap();
         let result = remove_pid_file(&inner);
         assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
+    }
+
+    #[test]
+    fn is_valid_pid_rejects_zero() {
+        assert!(!is_valid_pid(0));
+    }
+
+    #[test]
+    fn is_valid_pid_accepts_one() {
+        assert!(is_valid_pid(1));
+    }
+
+    #[test]
+    fn is_valid_pid_accepts_i32_max() {
+        assert!(is_valid_pid(i32::MAX as u32));
+    }
+
+    #[test]
+    fn is_valid_pid_rejects_above_i32_max() {
+        assert!(!is_valid_pid(i32::MAX as u32 + 1));
+    }
+
+    #[test]
+    fn send_signal_fails_for_nonexistent_process() {
+        // Use a valid PID that doesn't exist to cover the kill-failure path
+        let result = send_signal(i32::MAX as u32, "0");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("failed"));
+        assert!(!err.contains("invalid PID"));
     }
 }
