@@ -304,7 +304,10 @@ mod tests {
     fn stop_daemon_returns_not_running_when_stale_pid() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stale.pid");
-        write_pid(&path, u32::MAX).unwrap();
+        // Use a valid but non-existent PID (not u32::MAX, which wraps to -1
+        // on Linux and causes `kill -TERM -1` to SIGTERM all processes when
+        // the is_valid_pid -> true mutant is applied).
+        write_pid(&path, i32::MAX as u32).unwrap();
         let result = stop_daemon(&path);
         assert!(matches!(result, Err(DaemonError::NotRunning)));
     }
