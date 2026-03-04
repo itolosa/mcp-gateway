@@ -13,7 +13,7 @@ on:
       - "tests/**"
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 concurrency:
@@ -181,29 +181,30 @@ jobs:
           pattern: mutants-results-*
           path: results
 
-      - name: Calculate mutation score
-        id: score
+      - name: Update mutation badge
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           caught=$(cat results/mutants-results-*/caught.txt 2>/dev/null | wc -l)
           timeout=$(cat results/mutants-results-*/timeout.txt 2>/dev/null | wc -l)
           missed=$(cat results/mutants-results-*/missed.txt 2>/dev/null | wc -l)
           total=$((caught + timeout + missed))
           if [ "$total" -gt 0 ]; then
-            score=$(awk "BEGIN {printf \"%.1f\", ($caught + $timeout) * 100.0 / $total}")
+            SCORE=$(awk "BEGIN {printf \"%.1f\", ($caught + $timeout) * 100.0 / $total}")
           else
-            score="100.0"
+            SCORE="100.0"
           fi
-          echo "score=${score}" >> "$GITHUB_OUTPUT"
-          echo "Mutation score: ${score}% (caught=$caught, timeout=$timeout, missed=$missed, total=$total)"
-
-      - name: Update mutation badge
-        uses: schneegans/dynamic-badges-action@v1.7.0
-        with:
-          auth: ${{ secrets.GIST_TOKEN }}
-          gistID: 99cedd6610f5d7bcf1df28814dc5c1c2
-          filename: mutation.json
-          label: mutants killed
-          message: "${{ steps.score.outputs.score }}%"
-          valColorRange: ${{ steps.score.outputs.score }}
-          minColorRange: 50
-          maxColorRange: 100
+          echo "Mutation score: ${SCORE}% (caught=$caught, timeout=$timeout, missed=$missed, total=$total)"
+          if awk "BEGIN {exit !($SCORE >= 100)}"; then COLOR=brightgreen
+          elif awk "BEGIN {exit !($SCORE >= 90)}"; then COLOR=green
+          elif awk "BEGIN {exit !($SCORE >= 80)}"; then COLOR=yellowgreen
+          else COLOR=red; fi
+          BADGE_DIR=$(mktemp -d)
+          git clone --branch badges --single-branch --depth 1 \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$BADGE_DIR"
+          printf '{"schemaVersion":1,"label":"mutants killed","message":"%s%%","color":"%s"}\n' "$SCORE" "$COLOR" > "$BADGE_DIR/mutation.json"
+          cd "$BADGE_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mutation.json
+          git diff --cached --quiet || git commit -m "mutants killed: ${SCORE}%" && git push
