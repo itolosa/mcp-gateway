@@ -1,0 +1,29 @@
+class McpGateway < Formula
+  desc "Security proxy for Model Context Protocol (MCP) servers"
+  homepage "https://github.com/itolosa/mcp-gateway"
+  version "%%TAG%%"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/itolosa/mcp-gateway/releases/download/%%TAG%%/mcp-gateway-aarch64-apple-darwin.tar.gz"
+      sha256 "%%SHA_AARCH64_APPLE_DARWIN%%"
+    else
+      url "https://github.com/itolosa/mcp-gateway/releases/download/%%TAG%%/mcp-gateway-x86_64-apple-darwin.tar.gz"
+      sha256 "%%SHA_X86_64_APPLE_DARWIN%%"
+    end
+  end
+
+  on_linux do
+    url "https://github.com/itolosa/mcp-gateway/releases/download/%%TAG%%/mcp-gateway-x86_64-unknown-linux-gnu.tar.gz"
+    sha256 "%%SHA_X86_64_UNKNOWN_LINUX_GNU%%"
+  end
+
+  def install
+    bin.install "mcp-gateway"
+  end
+
+  test do
+    assert_match "mcp-gateway", shell_output("#{bin}/mcp-gateway --help")
+  end
+end

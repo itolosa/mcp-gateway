@@ -126,3 +126,52 @@ jobs:
           tag_name: ${{ needs.tag.outputs.tag_name }}
           files: artifacts/**/*.tar.gz
           generate_release_notes: true
+
+  update-tap:
+    name: Update Homebrew Tap
+    needs: [tag, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/formula
+
+      - name: Download release assets and compute checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag_name }}
+        run: |
+          REPO="itolosa/mcp-gateway"
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
+            FILE="mcp-gateway-${target}.tar.gz"
+            gh release download "$TAG" --repo "$REPO" --pattern "$FILE"
+            SHA=$(sha256sum "$FILE" | awk '{print $1}')
+            VAR="SHA_$(echo "$target" | tr '[:lower:]-' '[:upper:]_')"
+            echo "${VAR}=${SHA}" >> "$GITHUB_ENV"
+          done
+
+      - name: Generate formula from template
+        env:
+          TAG: ${{ needs.tag.outputs.tag_name }}
+        run: |
+          sed -e "s|%%TAG%%|${TAG}|g" \
+              -e "s|%%SHA_AARCH64_APPLE_DARWIN%%|${SHA_AARCH64_APPLE_DARWIN}|g" \
+              -e "s|%%SHA_X86_64_APPLE_DARWIN%%|${SHA_X86_64_APPLE_DARWIN}|g" \
+              -e "s|%%SHA_X86_64_UNKNOWN_LINUX_GNU%%|${SHA_X86_64_UNKNOWN_LINUX_GNU}|g" \
+              .github/formula/mcp-gateway.rb.template > mcp-gateway.rb
+
+      - name: Push formula to tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ needs.tag.outputs.tag_name }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/itolosa/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp mcp-gateway.rb tap/Formula/mcp-gateway.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/mcp-gateway.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "mcp-gateway ${TAG}"
+          git push
