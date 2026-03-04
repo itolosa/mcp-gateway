@@ -23,12 +23,14 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_TARGET_DIR: target
-  COVERAGE_JOBS: 2
 
 jobs:
-  mutants:
-    name: Mutation Testing
+  prepare:
+    name: Prepare
     runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.diff.outputs.mode }}
+      pattern: ${{ steps.diff.outputs.pattern }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,14 +90,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Run mutation testing (no baseline — full)
-        if: steps.diff.outputs.mode == 'full'
-        run: cargo mutants -vV --in-place --baseline=skip --timeout 60
-
-      - name: Run mutation testing (targeted)
-        if: steps.diff.outputs.mode == 'incremental'
-        run: cargo mutants -vV --in-place --baseline=skip --timeout 60 --re "${{ steps.diff.outputs.pattern }}"
-
       - name: Upload mutant baseline
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,9 +99,46 @@ jobs:
             current_mutants.txt
             coverage-map.json
 
-      - name: Upload mutation testing results
+  mutants:
+    name: Shard ${{ matrix.shard }}
+    needs: prepare
+    if: needs.prepare.outputs.mode != 'skip'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      - name: Run mutation testing (full)
+        if: needs.prepare.outputs.mode == 'full'
+        run: >
+          cargo mutants -vV --in-place --baseline=skip --timeout 60
+          --shard ${{ matrix.shard }}/4
+
+      - name: Run mutation testing (targeted)
+        if: needs.prepare.outputs.mode == 'incremental'
+        run: >
+          cargo mutants -vV --in-place --baseline=skip --timeout 60
+          --shard ${{ matrix.shard }}/4
+          --re "${{ needs.prepare.outputs.pattern }}"
+
+      - name: Upload shard results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mutants-results
+          name: mutants-results-${{ matrix.shard }}
           path: mutants.out/
