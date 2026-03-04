@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/itolosa/mcp-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/ci.yml)
 [![Mutation Testing](https://github.com/itolosa/mcp-gateway/actions/workflows/mutants.yml/badge.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/mutants.yml)
-[![Coverage](https://github.com/itolosa/mcp-gateway/raw/badges/coverage.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/ci.yml)
-[![Mutants Killed](https://github.com/itolosa/mcp-gateway/raw/badges/mutation.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/mutants.yml)
+[![Coverage](https://github.com/itolosa/mcp-gateway/raw/badges/.badges/main/coverage.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/ci.yml)
+[![Mutants Killed](https://github.com/itolosa/mcp-gateway/raw/badges/.badges/main/mutation.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/mutants.yml)
 
 A security proxy for [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) servers. It sits between an AI agent and upstream MCP servers, exposing only an allowed subset of tools — so you can grant an agent access to powerful servers (GitHub, databases, cloud APIs) without giving it the keys to everything.
 
