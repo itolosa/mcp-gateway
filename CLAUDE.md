@@ -10,8 +10,8 @@ MCP Gateway is a Rust-based proxy/firewall for Model Context Protocol (MCP) serv
 
 ```bash
 cargo build                    # build
-cargo test                     # run all tests
-cargo test <test_name>         # run a single test
+cargo nextest run              # run all tests (with 2s timeout per test)
+cargo nextest run -E 'test(name)'  # run a single test
 cargo fmt --all --check        # check formatting
 cargo clippy --all-targets -- -D warnings  # lint (zero warnings enforced)
 cargo llvm-cov --ignore-filename-regex 'main\.rs' --fail-under-lines 100 --fail-under-functions 100  # coverage (100% required, main.rs excluded)
@@ -27,6 +27,7 @@ Build target is `/tmp/mcp-gateway-target` (set in `.cargo/config.toml`).
 3. **Coverage**: 100% line and function coverage (excluding `main.rs`)
 4. **Mutation testing**: all mutants must be caught; config in `.cargo/mutants.toml` (excludes `main.rs`). **Never skip or exclude mutants** — if a mutant survives, fix the code or tests to kill it properly
 5. **Tests follow BDD**: SUT executed once per test case, sociable unit tests + narrow integration tests (mock upstream)
+6. **Test timeouts**: Enforced globally via `cargo-nextest` config in `.config/nextest.toml`. Tests exceeding 2s are flagged slow; tests exceeding 10s are killed. No test may hang. If a test is too slow, fix the code, not the timeout.
 
 ## Architecture Principles
 
@@ -46,11 +47,14 @@ Build target is `/tmp/mcp-gateway-target` (set in `.cargo/config.toml`).
 
 **Don't reinvent the wheel** - Use established libraries for complex protocols (OAuth, HTTP, JSON-RPC). Focus our code on the gateway-specific logic, not reimplementing standards.
 
+**Problems are OUR problems** - Never blame external tools, "pre-existing" issues, other people's code, or CI infrastructure. If something is broken, it's our responsibility to fix it. No excuses, no dismissing failures. We own the entire state of the project — code, tests, CI, tooling — and we leave everything green.
+
 ## Workflow Rules
 
 - **Task loop**: Always check `prd.json` for the highest-priority unblocked pending milestone. Implement it, update `progress.txt` with the completion note, mark the milestone as `"completed"` in `prd.json`, commit, then repeat with the next milestone.
 - **Commit after every win**: Always commit after each significant progress (milestone complete, quality gates passing, major refactor done). Small frequent commits let us roll back safely.
-- **Quality gates before commit**: Always run and pass ALL quality gates (fmt, clippy, 100% coverage, 100% mutation coverage) before committing a completed milestone. Never commit with failing gates.
+- **Quality gates before commit**: Always run and pass ALL quality gates (fmt, clippy, 100% coverage, 100% mutation coverage) before committing a completed milestone. Never commit with failing gates. This means the FULL suite — not just the files you changed. No shortcuts, no scoping to individual files.
+- **Every failure is our failure**: Never dismiss a failing test, surviving mutant, or CI failure as "pre-existing" or "not related to our changes." If it's broken, we own it and fix it before committing.
 - Spawn multiple agents in parallel for wide research tasks
 - Incremental approach: build by milestones, verify each before moving on
 - All config files are JSON

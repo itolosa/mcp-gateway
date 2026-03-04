@@ -131,21 +131,29 @@ jobs:
         with:
           cache-on-failure: "true"
 
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
+
       - name: Install cargo-mutants
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-mutants
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Run mutation testing (full)
         if: needs.prepare.outputs.mode == 'full'
         run: >
-          cargo mutants -vV --in-place --baseline=skip --timeout 60
+          cargo mutants -vV --in-place --baseline=skip --timeout 30
           --shard ${{ matrix.shard }}/${{ needs.prepare.outputs.shard_total }}
 
       - name: Run mutation testing (targeted)
         if: needs.prepare.outputs.mode == 'incremental'
         run: >
-          cargo mutants -vV --in-place --baseline=skip --timeout 60
+          cargo mutants -vV --in-place --baseline=skip --timeout 30
           --shard ${{ matrix.shard }}/${{ needs.prepare.outputs.shard_total }}
           --re "${{ needs.prepare.outputs.pattern }}"
 
