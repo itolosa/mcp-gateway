@@ -49,22 +49,24 @@ jobs:
       - name: Test with coverage
         run: cargo llvm-cov --ignore-filename-regex 'main\.rs' --fail-under-lines 100 --fail-under-functions 100
 
-      - name: Update coverage badge
+      - name: Extract coverage percentage
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        id: coverage
         run: |
           LINES=$(cargo llvm-cov report --json --ignore-filename-regex 'main\.rs' | jq '.data[0].totals.lines.percent')
-          if awk "BEGIN {exit !($LINES >= 100)}"; then COLOR=brightgreen
-          elif awk "BEGIN {exit !($LINES >= 90)}"; then COLOR=green
-          elif awk "BEGIN {exit !($LINES >= 80)}"; then COLOR=yellowgreen
-          else COLOR=red; fi
-          BADGE_DIR=$(mktemp -d)
-          git clone --branch badges --single-branch --depth 1 \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$BADGE_DIR"
-          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$LINES" "$COLOR" > "$BADGE_DIR/coverage.json"
-          cd "$BADGE_DIR"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add coverage.json
-          git diff --cached --quiet || git commit -m "coverage: ${LINES}%" && git push
+          echo "percentage=${LINES}" >> "$GITHUB_OUTPUT"
+          if awk "BEGIN {exit !($LINES >= 100)}"; then echo "color=brightgreen" >> "$GITHUB_OUTPUT"
+          elif awk "BEGIN {exit !($LINES >= 90)}"; then echo "color=green" >> "$GITHUB_OUTPUT"
+          elif awk "BEGIN {exit !($LINES >= 80)}"; then echo "color=yellowgreen" >> "$GITHUB_OUTPUT"
+          else echo "color=red" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Update coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: action-badges/core@0.4.0
+        with:
+          label: coverage
+          message: "${{ steps.coverage.outputs.percentage }}%"
+          message-color: "${{ steps.coverage.outputs.color }}"
+          file-name: coverage.svg
+          badge-branch: badges
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
