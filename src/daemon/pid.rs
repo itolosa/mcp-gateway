@@ -59,6 +59,11 @@ pub fn read_pid(path: &Path) -> Result<Option<u32>, DaemonError> {
 }
 
 pub fn is_process_alive(pid: u32) -> bool {
+    // pid_t is i32; PIDs above i32::MAX wrap to negative values,
+    // which would target process groups or all processes
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])
         .stdout(std::process::Stdio::null())
@@ -90,9 +95,11 @@ pub fn remove_pid_file(path: &Path) -> Result<(), DaemonError> {
 }
 
 pub fn send_signal(pid: u32, signal: &str) -> Result<(), DaemonError> {
-    if pid == 0 {
+    // pid_t is i32; PIDs 0 or above i32::MAX are invalid and dangerous
+    // (0 = current process group, negative = other process groups)
+    if pid == 0 || pid > i32::MAX as u32 {
         return Err(DaemonError::SignalFailed {
-            message: "invalid PID 0".to_string(),
+            message: format!("invalid PID {pid}"),
         });
     }
     let success = std::process::Command::new("kill")

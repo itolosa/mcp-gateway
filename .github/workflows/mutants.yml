@@ -40,7 +40,9 @@ jobs:
           cache-on-failure: "true"
 
       - name: Install cargo-mutants
-        run: cargo install cargo-mutants --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
