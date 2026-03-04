@@ -45,3 +45,23 @@ jobs:
 
       - name: Test with coverage
         run: cargo llvm-cov --ignore-filename-regex 'main\.rs' --fail-under-lines 100 --fail-under-functions 100
+
+      - name: Extract coverage percentage
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: coverage
+        run: |
+          LINES=$(cargo llvm-cov report --json --ignore-filename-regex 'main\.rs' | jq '.data[0].totals.lines.percent')
+          echo "percentage=${LINES}" >> "$GITHUB_OUTPUT"
+
+      - name: Update coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: 99cedd6610f5d7bcf1df28814dc5c1c2
+          filename: coverage.json
+          label: coverage
+          message: "${{ steps.coverage.outputs.percentage }}%"
+          valColorRange: ${{ steps.coverage.outputs.percentage }}
+          minColorRange: 50
+          maxColorRange: 100

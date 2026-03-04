@@ -166,3 +166,44 @@ jobs:
         with:
           name: mutants-results-${{ matrix.shard }}
           path: mutants.out/
+
+  badge:
+    name: Update Badge
+    needs: [prepare, mutants]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.mutants.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mutants-results-*
+          path: results
+
+      - name: Calculate mutation score
+        id: score
+        run: |
+          caught=$(cat results/mutants-results-*/caught.txt 2>/dev/null | wc -l)
+          timeout=$(cat results/mutants-results-*/timeout.txt 2>/dev/null | wc -l)
+          missed=$(cat results/mutants-results-*/missed.txt 2>/dev/null | wc -l)
+          total=$((caught + timeout + missed))
+          if [ "$total" -gt 0 ]; then
+            score=$(awk "BEGIN {printf \"%.1f\", ($caught + $timeout) * 100.0 / $total}")
+          else
+            score="100.0"
+          fi
+          echo "score=${score}" >> "$GITHUB_OUTPUT"
+          echo "Mutation score: ${score}% (caught=$caught, timeout=$timeout, missed=$missed, total=$total)"
+
+      - name: Update mutation badge
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: 99cedd6610f5d7bcf1df28814dc5c1c2
+          filename: mutation.json
+          label: mutants killed
+          message: "${{ steps.score.outputs.score }}%"
+          valColorRange: ${{ steps.score.outputs.score }}
+          minColorRange: 50
+          maxColorRange: 100
