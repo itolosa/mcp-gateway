@@ -31,6 +31,8 @@ jobs:
     outputs:
       mode: ${{ steps.diff.outputs.mode }}
       pattern: ${{ steps.diff.outputs.pattern }}
+      shards: ${{ steps.shards.outputs.shards }}
+      shard_total: ${{ steps.shards.outputs.shard_total }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +92,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Compute shard count
+        id: shards
+        run: |
+          count=$(wc -l < current_mutants.txt)
+          per_shard=30
+          total=$(( (count + per_shard - 1) / per_shard ))
+          if [ "$total" -lt 1 ]; then total=1; fi
+          echo "shard_total=$total" >> "$GITHUB_OUTPUT"
+          shards=$(seq 0 $(( total - 1 )) | jq -R 'tonumber' | jq -sc '.')
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
       - name: Upload mutant baseline
         if: always()
         uses: actions/upload-artifact@v4
@@ -107,7 +120,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: ${{ fromJson(needs.prepare.outputs.shards) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -127,13 +140,13 @@ jobs:
         if: needs.prepare.outputs.mode == 'full'
         run: >
           cargo mutants -vV --in-place --baseline=skip --timeout 60
-          --shard ${{ matrix.shard }}/8
+          --shard ${{ matrix.shard }}/${{ needs.prepare.outputs.shard_total }}
 
       - name: Run mutation testing (targeted)
         if: needs.prepare.outputs.mode == 'incremental'
         run: >
           cargo mutants -vV --in-place --baseline=skip --timeout 60
-          --shard ${{ matrix.shard }}/8
+          --shard ${{ matrix.shard }}/${{ needs.prepare.outputs.shard_total }}
           --re "${{ needs.prepare.outputs.pattern }}"
 
       - name: Upload shard results
