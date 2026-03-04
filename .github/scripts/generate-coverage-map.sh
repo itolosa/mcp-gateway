@@ -13,7 +13,7 @@ set -euo pipefail
 #   }
 # }
 
-JOBS="${COVERAGE_JOBS:-$(nproc)}"
+JOBS="${COVERAGE_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 PROJECT_ROOT="$(pwd)/"
 
 # LLVM tools from Rust toolchain
@@ -30,45 +30,23 @@ cargo llvm-cov clean --workspace
 cargo test --no-run --message-format=json 2>/dev/null > build_messages.json
 cargo build --message-format=json 2>/dev/null >> build_messages.json
 
-# Discover binaries from build messages
-declare -A BINARY_EXECUTABLE  # target name -> executable path
-declare -A BINARY_SOURCE      # target name -> relative source path (tests only)
-declare -A BINARY_KIND        # target name -> kind (lib|test|bin)
+# Discover binaries and enumerate tests — no associative arrays needed
+binary_count=$(jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .target.name' build_messages.json | sort -u | wc -l | tr -d ' ')
+echo "Found $binary_count binaries"
 
-while IFS=$'\t' read -r kind name src_path executable; do
-  BINARY_EXECUTABLE[$name]="$executable"
-  BINARY_KIND[$name]="$kind"
-
-  if [ "$kind" = "test" ]; then
-    BINARY_SOURCE[$name]="${src_path#"$PROJECT_ROOT"}"
-  fi
-done < <(jq -r 'select(.reason == "compiler-artifact" and .executable != null) |
-  [.target.kind[0], .target.name, .target.src_path, .executable] | @tsv' build_messages.json)
-
-echo "Found ${#BINARY_EXECUTABLE[@]} binaries: ${!BINARY_EXECUTABLE[*]}"
-
-# Create working directory
 mkdir -p entries
-
-# Enumerate all tests and build test list
-# Format: safe_name|binary_path|full_test_name|source_file
 : > test_list.txt
 
-for name in "${!BINARY_EXECUTABLE[@]}"; do
-  binary="${BINARY_EXECUTABLE[$name]}"
-  kind="${BINARY_KIND[$name]}"
-
+while IFS=$'\t' read -r kind name src_path executable; do
   [ "$kind" = "lib" ] || [ "$kind" = "test" ] || continue
 
   while IFS= read -r test_name; do
     [ -z "$test_name" ] && continue
 
     if [ "$kind" = "test" ]; then
-      source_file="${BINARY_SOURCE[$name]}"
+      source_file="${src_path#"$PROJECT_ROOT"}"
       full_test_name="${name}::${test_name}"
     else
-      # Unit test: derive source file from module path
-      # e.g., cli::command::tests::foo -> cli::command -> src/cli/command.rs
       module_path=$(echo "$test_name" | sed 's/::tests::.*$//' | sed 's/::/\//g')
       if [ -f "src/${module_path}.rs" ]; then
         source_file="src/${module_path}.rs"
@@ -79,9 +57,10 @@ for name in "${!BINARY_EXECUTABLE[@]}"; do
     fi
 
     safe_name=$(echo "${name}__${test_name}" | tr -c 'a-zA-Z0-9\n' '_')
-    echo "${safe_name}|${binary}|${full_test_name}|${source_file}" >> test_list.txt
-  done < <(LLVM_PROFILE_FILE=/dev/null "$binary" --list 2>/dev/null | grep ': test$' | sed 's/: test$//')
-done
+    echo "${safe_name}|${executable}|${full_test_name}|${source_file}" >> test_list.txt
+  done < <(LLVM_PROFILE_FILE=/dev/null "$executable" --list 2>/dev/null | grep ': test$' | sed 's/: test$//')
+done < <(jq -r 'select(.reason == "compiler-artifact" and .executable != null) |
+  [.target.kind[0], .target.name, .target.src_path, .executable] | @tsv' build_messages.json)
 
 TOTAL=$(wc -l < test_list.txt | tr -d ' ')
 echo "Enumerated $TOTAL tests to profile"
