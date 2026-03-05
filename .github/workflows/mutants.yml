@@ -1,16 +1,10 @@
 name: Mutation Testing
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches: [main]
-  pull_request:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".cargo/mutants.toml"
-      - "tests/**"
+    types: [completed]
 
 permissions:
   contents: write
@@ -27,6 +21,7 @@ env:
 jobs:
   prepare:
     name: Prepare
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.diff.outputs.mode }}
@@ -36,6 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Install mold linker
@@ -69,7 +65,7 @@ jobs:
         with:
           workflow: mutants.yml
           branch: main
-          event: push
+          event: workflow_run
           name: mutants-baseline
           path: previous-baseline
           if_no_artifact_found: ignore
@@ -79,7 +75,7 @@ jobs:
         with:
           workflow: mutants.yml
           branch: main
-          event: push
+          event: workflow_run
           name: mutants-killed
           path: previous-killed
           if_no_artifact_found: ignore
@@ -99,7 +95,7 @@ jobs:
       - name: Determine mutants to test
         id: diff
         run: |
-          COVERED_SHA=$(gh run list --workflow=mutants.yml --branch=main --event=push --status=success --limit=1 --json headSha --jq '.[0].headSha' 2>/dev/null || echo "")
+          COVERED_SHA=$(gh run list --workflow=mutants.yml --branch=main --status=success --limit=1 --json headSha --jq '.[0].headSha' 2>/dev/null || echo "")
           if [ -n "$COVERED_SHA" ] && git cat-file -e "$COVERED_SHA" 2>/dev/null; then
             export COVERED_SHA
           fi
@@ -144,6 +140,8 @@ jobs:
         shard: ${{ fromJson(needs.prepare.outputs.shards) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -189,7 +187,8 @@ jobs:
     name: Update Badge
     needs: [prepare, mutants]
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push' &&
       needs.mutants.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -212,7 +211,7 @@ jobs:
         with:
           workflow: mutants.yml
           branch: main
-          event: push
+          event: workflow_run
           name: mutants-killed
           path: previous-killed
           if_no_artifact_found: ignore

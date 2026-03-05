@@ -605,11 +605,7 @@ mod tests {
         let mut accumulated = String::new();
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
         while !accumulated.contains("data: second") {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            let n = tokio::time::timeout(remaining, tcp.read(&mut buf))
+            let n = tokio::time::timeout_at(deadline, tcp.read(&mut buf))
                 .await
                 .unwrap()
                 .unwrap();
