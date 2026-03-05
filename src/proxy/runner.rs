@@ -601,13 +601,21 @@ mod tests {
         sender.send("first".to_string()).unwrap();
         sender.send("second".to_string()).unwrap();
 
-        // The lagged message is skipped; we should receive "second"
-        let n = tokio::time::timeout(std::time::Duration::from_secs(1), tcp.read(&mut buf))
-            .await
-            .unwrap()
-            .unwrap();
-        let body = String::from_utf8_lossy(&buf[..n]);
-        assert!(body.contains("data: second"));
+        // Read until we see "data: second" (may arrive in separate TCP reads)
+        let mut accumulated = String::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !accumulated.contains("data: second") {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let n = tokio::time::timeout(remaining, tcp.read(&mut buf))
+                .await
+                .unwrap()
+                .unwrap();
+            accumulated.push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+        assert!(accumulated.contains("data: second"));
 
         ct.cancel();
         let _ = handle.await;
