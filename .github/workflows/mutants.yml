@@ -167,7 +167,9 @@ jobs:
         run: >
           cargo mutants -vV --in-place --baseline=skip --timeout 30
           --shard ${{ matrix.shard }}/${{ needs.prepare.outputs.shard_total }}
-          --re "${{ needs.prepare.outputs.pattern }}"
+          --re "$MUTANT_PATTERN"
+        env:
+          MUTANT_PATTERN: ${{ needs.prepare.outputs.pattern }}
 
       - name: Upload shard results
         if: always()
