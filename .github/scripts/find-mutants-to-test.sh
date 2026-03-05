@@ -4,11 +4,13 @@ set -euo pipefail
 # Determines which mutants need testing by combining:
 # 1. New mutants (from mutant list diff)
 # 2. Mutants affected by test/source changes (from per-test coverage map)
+# 3. Unproven mutants (not in previous killed list)
 #
 # Inputs (files in working directory):
-#   current_mutants.txt   - sorted list from current cargo mutants --list
-#   previous_mutants.txt  - sorted list from last successful run (optional)
+#   current_mutants.txt        - sorted list from current cargo mutants --list
+#   previous_mutants.txt       - sorted list from last successful run (optional)
 #   previous-coverage-map.json - per-test coverage map from last run (optional)
+#   previous_killed_mutants.txt - killed mutants from last run (optional)
 #
 # Environment:
 #   COVERED_SHA - commit SHA of last successful mutation run (optional)
@@ -72,6 +74,12 @@ fi
 
 # 3. Combine new + affected mutants
 cat new_mutants.txt affected_mutants.txt 2>/dev/null | sort -u > target_mutants.txt
+
+# 4. Add unproven mutants (not in previous killed list)
+if [ -f previous_killed_mutants.txt ]; then
+  comm -23 current_mutants.txt previous_killed_mutants.txt >> target_mutants.txt
+  sort -u -o target_mutants.txt target_mutants.txt
+fi
 
 if [ ! -s target_mutants.txt ]; then
   echo "No new or affected mutants, skipping"

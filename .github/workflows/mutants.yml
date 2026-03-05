@@ -59,7 +59,7 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate current mutant list
-        run: cargo mutants --list | sort > current_mutants.txt
+        run: cargo mutants --list --colors=never | sort > current_mutants.txt
 
       - name: Generate per-test coverage map
         run: .github/scripts/generate-coverage-map.sh
@@ -74,6 +74,16 @@ jobs:
           path: previous-baseline
           if_no_artifact_found: ignore
 
+      - name: Download previous killed list
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: mutants.yml
+          branch: main
+          event: push
+          name: mutants-killed
+          path: previous-killed
+          if_no_artifact_found: ignore
+
       - name: Prepare previous baseline
         run: |
           if [ -f previous-baseline/current_mutants.txt ]; then
@@ -81,6 +91,9 @@ jobs:
           fi
           if [ -f previous-baseline/coverage-map.json ]; then
             mv previous-baseline/coverage-map.json previous-coverage-map.json
+          fi
+          if [ -f previous-killed/killed_mutants.txt ]; then
+            mv previous-killed/killed_mutants.txt previous_killed_mutants.txt
           fi
 
       - name: Determine mutants to test
@@ -98,7 +111,12 @@ jobs:
       - name: Compute shard count
         id: shards
         run: |
-          count=$(wc -l < current_mutants.txt)
+          if [ "${{ steps.diff.outputs.mode }}" = "incremental" ]; then
+            count=$(wc -l < target_mutants.txt 2>/dev/null || echo "0")
+          else
+            count=$(wc -l < current_mutants.txt)
+          fi
+          count=$(echo "$count" | tr -d ' ')
           per_shard=30
           total=$(( (count + per_shard - 1) / per_shard ))
           if [ "$total" -lt 1 ]; then total=1; fi
@@ -183,24 +201,57 @@ jobs:
           pattern: mutants-results-*
           path: results
 
-      - name: Calculate mutation score
+      - name: Download baseline for killed list
+        uses: actions/download-artifact@v4
+        with:
+          name: mutants-baseline
+          path: baseline
+
+      - name: Download previous killed list
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: mutants.yml
+          branch: main
+          event: push
+          name: mutants-killed
+          path: previous-killed
+          if_no_artifact_found: ignore
+
+      - name: Calculate cumulative mutation score
         id: score
         run: |
-          caught=$(cat results/mutants-results-*/caught.txt 2>/dev/null | wc -l)
-          timeout=$(cat results/mutants-results-*/timeout.txt 2>/dev/null | wc -l)
-          missed=$(cat results/mutants-results-*/missed.txt 2>/dev/null | wc -l)
-          total=$((caught + timeout + missed))
+          # Collect caught and tested from shard results
+          cat results/mutants-results-*/caught.txt 2>/dev/null | sort -u > caught_this_run.txt
+          cat results/mutants-results-*/caught.txt results/mutants-results-*/timeout.txt results/mutants-results-*/missed.txt 2>/dev/null | sort -u > tested_this_run.txt
+
+          # Apply formula: killed = (prev_killed ∩ (current - tested)) ∪ caught
+          if [ -f previous-killed/killed_mutants.txt ]; then
+            comm -23 baseline/current_mutants.txt tested_this_run.txt > untested.txt
+            comm -12 previous-killed/killed_mutants.txt untested.txt > surviving_prev.txt
+            sort -u surviving_prev.txt caught_this_run.txt > killed_mutants.txt
+          else
+            cp caught_this_run.txt killed_mutants.txt
+          fi
+
+          total=$(wc -l < baseline/current_mutants.txt | tr -d ' ')
+          killed=$(wc -l < killed_mutants.txt | tr -d ' ')
           if [ "$total" -gt 0 ]; then
-            SCORE=$(awk "BEGIN {printf \"%.1f\", ($caught + $timeout) * 100.0 / $total}")
+            SCORE=$(awk "BEGIN {printf \"%.1f\", $killed * 100.0 / $total}")
           else
             SCORE="100.0"
           fi
           echo "score=${SCORE}" >> "$GITHUB_OUTPUT"
-          echo "Mutation score: ${SCORE}% (caught=$caught, timeout=$timeout, missed=$missed, total=$total)"
+          echo "Mutation score: ${SCORE}% (killed=$killed, total=$total)"
           if awk "BEGIN {exit !($SCORE >= 100)}"; then echo "color=brightgreen" >> "$GITHUB_OUTPUT"
           elif awk "BEGIN {exit !($SCORE >= 90)}"; then echo "color=green" >> "$GITHUB_OUTPUT"
           elif awk "BEGIN {exit !($SCORE >= 80)}"; then echo "color=yellowgreen" >> "$GITHUB_OUTPUT"
           else echo "color=red" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Upload killed mutants list
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-killed
+          path: killed_mutants.txt
 
       - name: Update mutation badge
         uses: action-badges/core@0.4.0
