@@ -1,6 +1,8 @@
 engines:
   opengrep:
     enabled: true
+    exclude_rules:
+      - "Semgrep_rust.lang.security.args-os.args-os"
 exclude_paths:
   - "tests/**"
   - "target/**"

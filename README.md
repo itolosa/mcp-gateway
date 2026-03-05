@@ -2,7 +2,6 @@
 
 [![Pipeline](https://github.com/itolosa/mcp-gateway/actions/workflows/pipeline.yml/badge.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/pipeline.yml)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/785bb6c1674949c9a0d13b9e94a5f8c7)](https://app.codacy.com/gh/itolosa/mcp-gateway/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
-[![Codacy Coverage](https://app.codacy.com/project/badge/Coverage/785bb6c1674949c9a0d13b9e94a5f8c7)](https://app.codacy.com/gh/itolosa/mcp-gateway/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
 [![Coverage](https://github.com/itolosa/mcp-gateway/raw/badges/.badges/main/coverage.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/pipeline.yml)
 [![Mutants Killed](https://github.com/itolosa/mcp-gateway/raw/badges/.badges/main/mutation.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/pipeline.yml)
 
