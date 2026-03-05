@@ -9,6 +9,10 @@ description = "A proxy/firewall for Model Context Protocol (MCP) servers"
 name = "echo-mcp-server"
 path = "tests/support/echo_server.rs"
 
+[[bin]]
+name = "multi-echo-server"
+path = "tests/support/multi_echo_server.rs"
+
 [dependencies]
 async-trait = "0.1"
 axum = "0.8"

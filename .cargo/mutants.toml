@@ -1,4 +1,4 @@
-exclude_globs = ["src/main.rs", "tests/support/echo_server.rs"]
+exclude_globs = ["src/main.rs", "tests/support/echo_server.rs", "tests/support/multi_echo_server.rs"]
 cap_lints = true
 test_tool = "nextest"
 profile = "mutants"
