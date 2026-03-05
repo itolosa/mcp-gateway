@@ -540,7 +540,7 @@ mod tests {
             "#!/bin/sh\n\
              STATE=$(echo \"$1\" | sed 's/.*state=//;s/&.*//')\n\
              REDIR=$(echo \"$1\" | sed 's/.*redirect_uri=//;s/&.*//')\n\
-             REDIR=$(python3 -c \"import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))\" <<< \"$REDIR\")\n\
+             REDIR=$(echo \"$REDIR\" | sed 's/%3A/:/g; s/%2F/\\//g')\n\
              curl -s \"${REDIR}?code=test_code&state=${STATE}\" >/dev/null 2>&1\n",
         )
         .unwrap();
