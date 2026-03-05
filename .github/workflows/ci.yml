@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  security-events: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -46,11 +47,36 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit dependencies
+        run: cargo audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Check dependency policy
+        run: cargo deny check
+
       - name: Build
         run: cargo build
 
       - name: Test with coverage
         run: cargo llvm-cov --ignore-filename-regex 'main\.rs' --fail-under-lines 100 --fail-under-functions 100
+
+      - name: Generate LCOV report
+        run: cargo llvm-cov report --lcov --ignore-filename-regex 'main\.rs' --output-path lcov.info
+
+      - name: Upload coverage to Codacy
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: lcov.info
 
       - name: Extract coverage percentage
         if: inputs.update_badge
@@ -73,3 +99,17 @@ jobs:
           file-name: coverage.svg
           badge-branch: badges
           github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: rust
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3

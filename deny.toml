@@ -1,0 +1,27 @@
+[advisories]
+unmaintained = "workspace"
+unsound = "all"
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "OpenSSL",
+    "MPL-2.0",
+
+    "BSD-2-Clause",
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+wildcards = "deny"
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

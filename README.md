@@ -1,9 +1,10 @@
 # MCP Gateway
 
-[![CI](https://github.com/itolosa/mcp-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/ci.yml)
-[![Mutation Testing](https://github.com/itolosa/mcp-gateway/actions/workflows/mutants.yml/badge.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/mutants.yml)
-[![Coverage](https://github.com/itolosa/mcp-gateway/raw/badges/.badges/main/coverage.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/ci.yml)
-[![Mutants Killed](https://github.com/itolosa/mcp-gateway/raw/badges/.badges/main/mutation.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/mutants.yml)
+[![Pipeline](https://github.com/itolosa/mcp-gateway/actions/workflows/pipeline.yml/badge.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/pipeline.yml)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/785bb6c1674949c9a0d13b9e94a5f8c7)](https://app.codacy.com/gh/itolosa/mcp-gateway/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Codacy Coverage](https://app.codacy.com/project/badge/Coverage/785bb6c1674949c9a0d13b9e94a5f8c7)](https://app.codacy.com/gh/itolosa/mcp-gateway/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
+[![Coverage](https://github.com/itolosa/mcp-gateway/raw/badges/.badges/main/coverage.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/pipeline.yml)
+[![Mutants Killed](https://github.com/itolosa/mcp-gateway/raw/badges/.badges/main/mutation.svg)](https://github.com/itolosa/mcp-gateway/actions/workflows/pipeline.yml)
 
 A security proxy for [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) servers. It sits between an AI agent and upstream MCP servers, exposing only an allowed subset of tools — so you can grant an agent access to powerful servers (GitHub, databases, cloud APIs) without giving it the keys to everything.
 
@@ -131,18 +132,12 @@ All state lives in a single JSON file. The CLI commands manage it for you, but h
 
 MCP Gateway follows a ports-and-adapters (hexagonal) architecture. The core domain has no external dependencies — transport, storage, and filtering are plugged in at the edges via generics (compile-time DI, no dynamic dispatch).
 
-```
-                                                                   ┌──────────┐
-                                                  stdio/http  ┌──►│ Server A │
-┌─────────┐       stdio        ┌───────────────┐             │    └──────────┘
-│  Agent   │◄────────────────►│  MCP Gateway    │◄────────────┤
-│ (client) │                   │                │             │    ┌──────────┐
-└─────────┘                    │  Per-server    │  stdio/http  └──►│ Server B │
-                               │  filters +     │                  └──────────┘
-                               │  prefix routing │
-                               │                │
-                               │  CLI Tools     │
-                               └────────────────┘
+```mermaid
+graph LR
+    Agent[Agent<br/>client] <-->|stdio| GW[MCP Gateway<br/>filters + prefix routing]
+    GW <-->|stdio/http| A[Server A]
+    GW <-->|stdio/http| B[Server B]
+    GW --- CLI[CLI Tools]
 ```
 
 ## License

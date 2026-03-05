@@ -1,0 +1,6 @@
+engines:
+  opengrep:
+    enabled: true
+exclude_paths:
+  - "tests/**"
+  - "target/**"
