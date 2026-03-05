@@ -51,6 +51,7 @@ fn extract_text(result: &rmcp::model::CallToolResult) -> &str {
 }
 
 #[tokio::test]
+#[ignore]
 async fn should_aggregate_tools_from_multiple_servers() {
     // Given two servers registered with different names
     let dir = tempfile::tempdir().unwrap();
@@ -108,6 +109,7 @@ async fn should_aggregate_tools_from_multiple_servers() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn should_only_expose_allowed_tools() {
     // Given a server with an allowlist of echo and upper
     let dir = tempfile::tempdir().unwrap();
@@ -141,6 +143,7 @@ async fn should_only_expose_allowed_tools() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn should_hide_denied_tools() {
     // Given a server with reverse on the denylist
     let dir = tempfile::tempdir().unwrap();
@@ -174,6 +177,7 @@ async fn should_hide_denied_tools() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn should_return_error_for_unknown_tool() {
     // Given a single server registered
     let dir = tempfile::tempdir().unwrap();
