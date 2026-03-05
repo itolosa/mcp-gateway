@@ -20,15 +20,8 @@ mod proxy_stress {
 
     impl ServerHandler for EchoServer {
         fn get_info(&self) -> ServerInfo {
-            ServerInfo {
-                capabilities: ServerCapabilities::builder().enable_tools().build(),
-                server_info: Implementation {
-                    name: "echo-stress".to_string(),
-                    version: "0.1.0".to_string(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+                .with_server_info(Implementation::new("echo-stress", "0.1.0"))
         }
 
         async fn list_tools(
@@ -44,11 +37,11 @@ mod proxy_stress {
                     }
                 }))
                 .expect("static schema");
-            Ok(ListToolsResult {
-                tools: vec![Tool::new("echo", "echoes input", schema)],
-                next_cursor: None,
-                meta: None,
-            })
+            Ok(ListToolsResult::with_all_items(vec![Tool::new(
+                "echo",
+                "echoes input",
+                schema,
+            )]))
         }
 
         async fn call_tool(
@@ -78,15 +71,8 @@ mod proxy_stress {
 
     impl ServerHandler for SlowServer {
         fn get_info(&self) -> ServerInfo {
-            ServerInfo {
-                capabilities: ServerCapabilities::builder().enable_tools().build(),
-                server_info: Implementation {
-                    name: "slow-stress".to_string(),
-                    version: "0.1.0".to_string(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+                .with_server_info(Implementation::new("slow-stress", "0.1.0"))
         }
 
         async fn list_tools(
@@ -102,11 +88,11 @@ mod proxy_stress {
                     }
                 }))
                 .expect("static schema");
-            Ok(ListToolsResult {
-                tools: vec![Tool::new("echo", "echoes input", schema)],
-                next_cursor: None,
-                meta: None,
-            })
+            Ok(ListToolsResult::with_all_items(vec![Tool::new(
+                "echo",
+                "echoes input",
+                schema,
+            )]))
         }
 
         async fn call_tool(
@@ -185,12 +171,8 @@ mod proxy_stress {
     }
 
     fn echo_params(msg: &str) -> CallToolRequestParams {
-        CallToolRequestParams {
-            name: "srv__echo".into(),
-            arguments: Some(serde_json::from_value(serde_json::json!({"message": msg})).unwrap()),
-            meta: None,
-            task: None,
-        }
+        CallToolRequestParams::new("srv__echo")
+            .with_arguments(serde_json::from_value(serde_json::json!({"message": msg})).unwrap())
     }
 
     fn extract_text(result: &CallToolResult) -> &str {
@@ -372,12 +354,7 @@ mod proxy_stress {
     async fn call_tool_with_empty_name_returns_error() {
         let (client, upstream_h, proxy_h) = setup_proxy().await;
 
-        let params = CallToolRequestParams {
-            name: "".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("");
         let result = client.call_tool(params).await;
         assert!(result.is_err());
 
@@ -390,12 +367,7 @@ mod proxy_stress {
     async fn call_tool_with_null_arguments_returns_default() {
         let (client, upstream_h, proxy_h) = setup_proxy().await;
 
-        let params = CallToolRequestParams {
-            name: "srv__echo".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("srv__echo");
         let result = client.call_tool(params).await.unwrap();
         // EchoServer with None arguments returns empty string
         assert_eq!(extract_text(&result), "");
@@ -554,12 +526,8 @@ mod proxy_stress {
         for i in 0..20 {
             let c = client.clone();
             set.spawn(async move {
-                let params = CallToolRequestParams {
-                    name: "cat-tool".into(),
-                    arguments: Some(serde_json::from_value(serde_json::json!({"idx": i})).unwrap()),
-                    meta: None,
-                    task: None,
-                };
+                let params = CallToolRequestParams::new("cat-tool")
+                    .with_arguments(serde_json::from_value(serde_json::json!({"idx": i})).unwrap());
                 let result = c.call_tool(params).await.unwrap();
                 let text = extract_text(&result);
                 assert!(
@@ -588,12 +556,7 @@ mod proxy_stress {
         for _ in 0..20 {
             let c = client.clone();
             set.spawn(async move {
-                let params = CallToolRequestParams {
-                    name: "false-tool".into(),
-                    arguments: None,
-                    meta: None,
-                    task: None,
-                };
+                let params = CallToolRequestParams::new("false-tool");
                 let result = c.call_tool(params).await.unwrap();
                 assert!(
                     result.is_error.unwrap_or(false),

@@ -11,18 +11,8 @@ struct EchoServer;
 
 impl ServerHandler for EchoServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "echo-test".to_string(),
-                version: "0.1.0".to_string(),
-                title: None,
-                description: None,
-                icons: None,
-                website_url: None,
-            },
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("echo-test", "0.1.0"))
     }
 
     async fn list_tools(
@@ -38,11 +28,11 @@ impl ServerHandler for EchoServer {
                 }
             }))
             .expect("static schema");
-        Ok(ListToolsResult {
-            tools: vec![Tool::new("echo", "echoes input", schema)],
-            next_cursor: None,
-            meta: None,
-        })
+        Ok(ListToolsResult::with_all_items(vec![Tool::new(
+            "echo",
+            "echoes input",
+            schema,
+        )]))
     }
 
     async fn call_tool(

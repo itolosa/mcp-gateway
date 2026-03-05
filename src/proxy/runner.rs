@@ -253,10 +253,7 @@ mod tests {
 
     impl ServerHandler for MinimalServer {
         fn get_info(&self) -> ServerInfo {
-            ServerInfo {
-                capabilities: ServerCapabilities::builder().enable_tools().build(),
-                ..Default::default()
-            }
+            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
         }
 
         async fn list_tools(
