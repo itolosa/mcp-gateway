@@ -285,11 +285,27 @@ fn start_daemon(
     if let Some(existing_pid) = pid::check_already_running(&pid_path)? {
         return Err(mcp_gateway::daemon::error::DaemonError::AlreadyRunning { pid: existing_pid });
     }
-    // Port check is sync here — we just try to bind in the parent before spawning
-    let std_listener = std::net::TcpListener::bind(("127.0.0.1", port))
-        .map_err(|_| mcp_gateway::daemon::error::DaemonError::PortInUse { port })?;
-    drop(std_listener);
+    check_port_available(port)?;
+    let child = spawn_daemon_process(config_path, port)?;
+    pid::write_pid(&pid_path, child.id())?;
+    let port_path = pid::default_port_path().unwrap_or_default();
+    pid::write_port(&port_path, port)?;
+    tracing::info!("gateway started on port {port} (PID {})", child.id());
+    Ok(())
+}
 
+fn check_port_available(port: u16) -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port))
+        .map_err(|_| mcp_gateway::daemon::error::DaemonError::PortInUse { port })?;
+    drop(listener);
+    Ok(())
+}
+
+fn spawn_daemon_process(
+    config_path: &std::path::Path,
+    port: u16,
+) -> Result<std::process::Child, mcp_gateway::daemon::error::DaemonError> {
+    // Use argv[0] to locate our own executable for re-exec
     let exe = std::env::args_os()
         .next()
         .map(std::path::PathBuf::from)
@@ -297,30 +313,22 @@ fn start_daemon(
             message: "cannot determine executable path: argv[0] is empty".to_string(),
         })?;
 
-    let mut cmd = std::process::Command::new(exe);
-    cmd.args([
-        "-c",
-        &config_path.to_string_lossy(),
-        "start",
-        "--port",
-        &port.to_string(),
-        "--foreground",
-    ]);
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
-
-    let child = cmd
+    std::process::Command::new(exe)
+        .args([
+            "-c",
+            &config_path.to_string_lossy(),
+            "start",
+            "--port",
+            &port.to_string(),
+            "--foreground",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| mcp_gateway::daemon::error::DaemonError::PidWrite {
             message: format!("failed to spawn daemon: {e}"),
-        })?;
-
-    pid::write_pid(&pid_path, child.id())?;
-    let port_path = pid::default_port_path().unwrap_or_default();
-    pid::write_port(&port_path, port)?;
-    tracing::info!("gateway started on port {port} (PID {})", child.id());
-    Ok(())
+        })
 }
 
 async fn connect_upstream(
