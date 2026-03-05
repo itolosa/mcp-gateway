@@ -20,6 +20,10 @@ jobs:
       update_badge: true
     secrets: inherit
 
+  codeql:
+    uses: ./.github/workflows/codeql.yml
+    secrets: inherit
+
   mutants:
     needs: ci
     uses: ./.github/workflows/mutants.yml
