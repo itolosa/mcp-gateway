@@ -209,17 +209,17 @@ jobs:
       - name: Calculate cumulative mutation score
         id: score
         run: |
-          # Collect caught and tested from shard results
-          cat results/mutants-results-*/caught.txt 2>/dev/null | sort -u > caught_this_run.txt
-          cat results/mutants-results-*/caught.txt results/mutants-results-*/timeout.txt results/mutants-results-*/missed.txt 2>/dev/null | sort -u > tested_this_run.txt
+          # Collect killed (caught + timeout + unviable) and tested from shard results
+          cat results/mutants-results-*/caught.txt results/mutants-results-*/timeout.txt results/mutants-results-*/unviable.txt 2>/dev/null | sort -u > killed_this_run.txt
+          cat results/mutants-results-*/caught.txt results/mutants-results-*/timeout.txt results/mutants-results-*/unviable.txt results/mutants-results-*/missed.txt 2>/dev/null | sort -u > tested_this_run.txt
 
-          # Apply formula: killed = (prev_killed ∩ (current - tested)) ∪ caught
+          # Apply formula: killed = (prev_killed ∩ (current - tested)) ∪ killed_this_run
           if [ -f previous-killed/killed_mutants.txt ]; then
             comm -23 baseline/current_mutants.txt tested_this_run.txt > untested.txt
             comm -12 previous-killed/killed_mutants.txt untested.txt > surviving_prev.txt
-            sort -u surviving_prev.txt caught_this_run.txt > killed_mutants.txt
+            sort -u surviving_prev.txt killed_this_run.txt > killed_mutants.txt
           else
-            cp caught_this_run.txt killed_mutants.txt
+            cp killed_this_run.txt killed_mutants.txt
           fi
 
           total=$(wc -l < baseline/current_mutants.txt | tr -d ' ')
