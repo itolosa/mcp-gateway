@@ -1,18 +1,15 @@
 name: Mutation Testing
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    branches: [main]
-    types: [completed]
+  workflow_call:
+    inputs:
+      update_badge:
+        type: boolean
+        default: false
 
 permissions:
   contents: write
   actions: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,7 +18,6 @@ env:
 jobs:
   prepare:
     name: Prepare
-    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.diff.outputs.mode }}
@@ -31,7 +27,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Install mold linker
@@ -63,9 +58,9 @@ jobs:
       - name: Download previous baseline
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: mutants.yml
+          workflow: pipeline.yml
           branch: main
-          event: workflow_run
+          event: push
           name: mutants-baseline
           path: previous-baseline
           if_no_artifact_found: ignore
@@ -73,9 +68,9 @@ jobs:
       - name: Download previous killed list
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: mutants.yml
+          workflow: pipeline.yml
           branch: main
-          event: workflow_run
+          event: push
           name: mutants-killed
           path: previous-killed
           if_no_artifact_found: ignore
@@ -95,7 +90,7 @@ jobs:
       - name: Determine mutants to test
         id: diff
         run: |
-          COVERED_SHA=$(gh run list --workflow=mutants.yml --branch=main --status=success --limit=1 --json headSha --jq '.[0].headSha' 2>/dev/null || echo "")
+          COVERED_SHA=$(gh run list --workflow=pipeline.yml --branch=main --status=success --limit=1 --json headSha --jq '.[0].headSha' 2>/dev/null || echo "")
           if [ -n "$COVERED_SHA" ] && git cat-file -e "$COVERED_SHA" 2>/dev/null; then
             export COVERED_SHA
           fi
@@ -140,8 +135,6 @@ jobs:
         shard: ${{ fromJson(needs.prepare.outputs.shards) }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -186,10 +179,7 @@ jobs:
   badge:
     name: Update Badge
     needs: [prepare, mutants]
-    if: >-
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push' &&
-      needs.mutants.result == 'success'
+    if: inputs.update_badge && needs.mutants.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -209,9 +199,9 @@ jobs:
       - name: Download previous killed list
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: mutants.yml
+          workflow: pipeline.yml
           branch: main
-          event: workflow_run
+          event: push
           name: mutants-killed
           path: previous-killed
           if_no_artifact_found: ignore

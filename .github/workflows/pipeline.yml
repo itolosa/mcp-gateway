@@ -1,0 +1,28 @@
+name: Pipeline
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    with:
+      update_badge: true
+    secrets: inherit
+
+  mutants:
+    needs: ci
+    uses: ./.github/workflows/mutants.yml
+    with:
+      update_badge: true
+    secrets: inherit
+
+  release:
+    needs: ci
+    uses: ./.github/workflows/release.yml
+    secrets: inherit
