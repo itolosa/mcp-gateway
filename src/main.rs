@@ -46,7 +46,11 @@ async fn main() {
     let registry = RegistryService::new(store);
 
     let result = match cli.command {
-        None => Ok(()),
+        None => {
+            use clap::CommandFactory;
+            Cli::command().print_help().ok();
+            Ok(())
+        }
         Some(Command::Add(args)) => run_add(&registry, args).map_err(|e| e.to_string()),
         Some(Command::List) => {
             run_list(&registry, &mut std::io::stdout()).map_err(|e| e.to_string())

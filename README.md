@@ -18,6 +18,14 @@ A security proxy for [Model Context Protocol](https://modelcontextprotocol.io/) 
 
 ## Install
 
+**Homebrew (macOS / Linux):**
+
+```bash
+brew install itolosa/tap/mcp-gateway
+```
+
+**Cargo (from source):**
+
 ```bash
 cargo install --path .
 ```
@@ -58,6 +66,11 @@ The gateway starts on stdio, connects to all registered servers, and exposes the
 | `list` | List all registered servers | `mcp-gateway list` |
 | `remove <name>` | Remove a registered server | `mcp-gateway remove fs` |
 | `run` | Start the gateway for all servers | `mcp-gateway run` |
+| `start` | Start the gateway as a background daemon | `mcp-gateway start` |
+| `stop` | Stop the running daemon | `mcp-gateway stop` |
+| `status` | Check if the daemon is running | `mcp-gateway status` |
+| `restart` | Restart the daemon | `mcp-gateway restart` |
+| `attach` | Attach to the daemon's log stream | `mcp-gateway attach` |
 | `allowlist add <name> <tools...>` | Allow only specific tools | `mcp-gateway allowlist add fs read_file` |
 | `allowlist remove <name> <tools...>` | Remove tools from the allowlist | `mcp-gateway allowlist remove fs read_file` |
 | `allowlist show <name>` | Show a server's allowlist | `mcp-gateway allowlist show fs` |
