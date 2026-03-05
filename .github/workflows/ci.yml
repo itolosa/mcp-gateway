@@ -24,6 +24,8 @@ jobs:
   check:
     name: Check, Test, Lint
     runs-on: ubuntu-latest
+    env:
+      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -72,6 +74,7 @@ jobs:
         run: cargo llvm-cov report --lcov --ignore-filename-regex 'main\.rs' --output-path lcov.info
 
       - name: Upload coverage to Codacy
+        if: env.CODACY_PROJECT_TOKEN != ''
         uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
