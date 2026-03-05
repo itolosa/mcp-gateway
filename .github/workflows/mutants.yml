@@ -115,6 +115,17 @@ jobs:
           shards=$(seq 0 $(( total - 1 )) | jq -R 'tonumber' | jq -sc '.')
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
 
+      - name: Carry forward killed list when skipping
+        if: steps.diff.outputs.mode == 'skip' && hashFiles('previous_killed_mutants.txt') != ''
+        run: cp previous_killed_mutants.txt killed_mutants.txt
+
+      - name: Upload killed list passthrough
+        if: steps.diff.outputs.mode == 'skip' && hashFiles('killed_mutants.txt') != ''
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: mutants-killed
+          path: killed_mutants.txt
+
       - name: Upload mutant baseline
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0

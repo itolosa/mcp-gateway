@@ -28,6 +28,14 @@ if [ ! -f previous_mutants.txt ]; then
   exit 0
 fi
 
+# If baseline exists but killed list is missing, run full
+# (incremental mode needs the killed list to carry forward untested results)
+if [ ! -f previous_killed_mutants.txt ]; then
+  echo "No previous killed list found, running full"
+  echo "mode=full" >> "$OUTPUT"
+  exit 0
+fi
+
 # 1. Find new mutants (in current but not in previous)
 comm -23 current_mutants.txt previous_mutants.txt > new_mutants.txt || true
 
