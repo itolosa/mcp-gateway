@@ -106,8 +106,8 @@ jobs:
           BIN=mcp-gateway
           ARCHIVE="${BIN}-${{ matrix.target }}.tar.gz"
           RELEASE_DIR="target/${{ matrix.target }}/release"
-          cp LICENSE NOTICE THIRDPARTY "${RELEASE_DIR}/"
-          tar czf "${ARCHIVE}" -C "${RELEASE_DIR}" "${BIN}" LICENSE NOTICE THIRDPARTY
+          cp LICENSE THIRDPARTY "${RELEASE_DIR}/"
+          tar czf "${ARCHIVE}" -C "${RELEASE_DIR}" "${BIN}" LICENSE THIRDPARTY
           echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 
       - name: Upload artifact
