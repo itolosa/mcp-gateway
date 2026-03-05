@@ -59,7 +59,19 @@ pub(crate) async fn run_callback_server_with_timeout(
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
         .await
         .map_err(|e| bind_err(port, e))?;
+    run_callback_on_listener_with_timeout(listener, timeout).await
+}
 
+pub(crate) async fn run_callback_on_listener(
+    listener: tokio::net::TcpListener,
+) -> Result<CallbackParams, OAuthError> {
+    run_callback_on_listener_with_timeout(listener, CALLBACK_TIMEOUT).await
+}
+
+async fn run_callback_on_listener_with_timeout(
+    listener: tokio::net::TcpListener,
+    timeout: Duration,
+) -> Result<CallbackParams, OAuthError> {
     tokio::time::timeout(timeout, accept_callback(&listener))
         .await
         .unwrap_or_else(|_| Err(timeout_err()))

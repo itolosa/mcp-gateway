@@ -7,7 +7,7 @@ use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig
 use rmcp::transport::StreamableHttpClientTransport;
 
 use crate::config::model::OAuthConfig;
-use crate::oauth::callback::{run_callback_server, CallbackParams};
+use crate::oauth::callback::{run_callback_on_listener, CallbackParams};
 use crate::oauth::credentials::FileCredentialStore;
 use crate::oauth::error::OAuthError;
 
@@ -35,7 +35,7 @@ pub(crate) async fn create_oauth_transport_with<F, Fut>(
     interactive: F,
 ) -> Result<StreamableHttpClientTransport<AuthClient<reqwest::Client>>, OAuthError>
 where
-    F: FnOnce(String, u16) -> Fut,
+    F: FnOnce(String, tokio::net::TcpListener) -> Fut,
     Fut: Future<Output = Result<CallbackParams, OAuthError>>,
 {
     let mut auth_manager = AuthorizationManager::new(server_url)
@@ -113,10 +113,11 @@ async fn run_authorization_flow<F, Fut>(
     interactive: F,
 ) -> Result<(), OAuthError>
 where
-    F: FnOnce(String, u16) -> Fut,
+    F: FnOnce(String, tokio::net::TcpListener) -> Fut,
     Fut: Future<Output = Result<CallbackParams, OAuthError>>,
 {
-    let redirect_uri = format!("http://127.0.0.1:{}", oauth_config.redirect_port);
+    let redirect_port = oauth_config.redirect_port;
+    let redirect_uri = format!("http://127.0.0.1:{redirect_port}");
 
     if let Some(client_id) = &oauth_config.client_id {
         let config = OAuthClientConfig {
@@ -127,7 +128,7 @@ where
         };
         auth_manager.configure_client(config).map_err(auth_err)?;
     } else {
-        let scope_refs: Vec<&str> = oauth_config.scopes.iter().map(|s| s.as_str()).collect();
+        let scope_refs: Vec<&str> = oauth_config.scopes.iter().map(String::as_str).collect();
         auth_manager
             .register_client("mcp-gateway", &redirect_uri, &scope_refs)
             .await
@@ -140,7 +141,13 @@ where
         .await
         .map_err(auth_err)?;
 
-    let callback = interactive(auth_url.to_string(), oauth_config.redirect_port).await?;
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{redirect_port}"))
+        .await
+        .map_err(|e| OAuthError::CallbackServer {
+            message: format!("bind to port {redirect_port}: {e}"),
+        })?;
+
+    let callback = interactive(auth_url.to_string(), listener).await?;
 
     auth_manager
         .exchange_code_for_token(&callback.code, &callback.state)
@@ -150,7 +157,10 @@ where
     Ok(())
 }
 
-async fn browser_auth(auth_url: String, redirect_port: u16) -> Result<CallbackParams, OAuthError> {
+async fn browser_auth(
+    auth_url: String,
+    listener: tokio::net::TcpListener,
+) -> Result<CallbackParams, OAuthError> {
     let browser_override = std::env::var("BROWSER");
     let program = browser_override.as_deref().unwrap_or(default_browser());
     let _ = std::process::Command::new(program)
@@ -160,7 +170,7 @@ async fn browser_auth(auth_url: String, redirect_port: u16) -> Result<CallbackPa
         .stderr(std::process::Stdio::null())
         .spawn();
     eprintln!("Visit this URL to authorize: {auth_url}");
-    run_callback_server(redirect_port).await
+    run_callback_on_listener(listener).await
 }
 
 fn default_browser() -> &'static str {
@@ -237,7 +247,7 @@ mod tests {
 
     async fn test_interactive_auth(
         auth_url: String,
-        _redirect_port: u16,
+        _listener: tokio::net::TcpListener,
     ) -> Result<CallbackParams, OAuthError> {
         let parsed = url::Url::parse(&auth_url).unwrap();
         let state = parsed
@@ -318,27 +328,26 @@ mod tests {
         std::env::set_var("BROWSER", "true");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        drop(listener);
 
-        let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
-                .await
-                .unwrap();
-            tokio::io::AsyncWriteExt::write_all(
-                &mut client,
-                b"GET /?code=test_code&state=test_state HTTP/1.1\r\nHost: localhost\r\n\r\n",
-            )
+        let auth_handle =
+            tokio::spawn(
+                async move { browser_auth("http://auth-url".to_string(), listener).await },
+            );
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
             .await
             .unwrap();
-        });
+        tokio::io::AsyncWriteExt::write_all(
+            &mut client,
+            b"GET /?code=test_code&state=test_state HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        )
+        .await
+        .unwrap();
 
-        let result = browser_auth("http://auth-url".to_string(), port)
-            .await
-            .unwrap();
+        let result = auth_handle.await.unwrap().unwrap();
         assert_eq!(result.code, "test_code");
         assert_eq!(result.state, "test_state");
-        handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -436,7 +445,7 @@ mod tests {
             client_id: Some("my-app".to_string()),
             client_secret: None,
             scopes: vec!["read".to_string()],
-            redirect_port: 9876,
+            redirect_port: 0,
             credentials_file: Some(dir.path().join("creds.json").to_string_lossy().to_string()),
         };
 
@@ -460,7 +469,7 @@ mod tests {
             client_id: None,
             client_secret: None,
             scopes: vec![],
-            redirect_port: 9876,
+            redirect_port: 0,
             credentials_file: Some(dir.path().join("creds.json").to_string_lossy().to_string()),
         };
 
@@ -492,5 +501,69 @@ mod tests {
         let result =
             run_authorization_flow(&mut auth_manager, &config, test_interactive_auth).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn run_authorization_flow_bind_conflict_returns_error() {
+        let base_url = start_mock_oauth_server().await;
+        let mut auth_manager = AuthorizationManager::new(&base_url).await.unwrap();
+        let metadata = auth_manager.discover_metadata().await.unwrap();
+        auth_manager.set_metadata(metadata);
+
+        let blocker = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = blocker.local_addr().unwrap().port();
+
+        let config = OAuthConfig {
+            client_id: Some("app".to_string()),
+            client_secret: None,
+            scopes: vec![],
+            redirect_port: port,
+            credentials_file: None,
+        };
+
+        let result =
+            run_authorization_flow(&mut auth_manager, &config, test_interactive_auth).await;
+        let err = result.err().unwrap();
+        assert!(matches!(err, OAuthError::CallbackServer { .. }));
+        assert!(err.to_string().contains("bind to port"));
+        drop(blocker);
+    }
+
+    #[tokio::test]
+    async fn create_oauth_transport_completes_browser_auth_flow() {
+        let base_url = start_mock_oauth_server().await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let script_path = dir.path().join("fake_browser.sh");
+        std::fs::write(
+            &script_path,
+            "#!/bin/sh\n\
+             STATE=$(echo \"$1\" | sed 's/.*state=//;s/&.*//')\n\
+             REDIR=$(echo \"$1\" | sed 's/.*redirect_uri=//;s/&.*//')\n\
+             REDIR=$(python3 -c \"import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))\" <<< \"$REDIR\")\n\
+             curl -s \"${REDIR}?code=test_code&state=${STATE}\" >/dev/null 2>&1\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::env::set_var("BROWSER", script_path.to_str().unwrap());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redirect_port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let config = OAuthConfig {
+            client_id: Some("my-app".to_string()),
+            client_secret: None,
+            scopes: vec!["read".to_string()],
+            redirect_port,
+            credentials_file: Some(dir.path().join("creds.json").to_string_lossy().to_string()),
+        };
+
+        let result = create_oauth_transport(&base_url, &config, "test", HashMap::new()).await;
+        assert!(result.is_ok());
     }
 }
