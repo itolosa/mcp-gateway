@@ -45,92 +45,124 @@ async fn main() {
     let store = FileConfigStore::new(&config_path);
     let registry = RegistryService::new(store);
 
-    let result = match cli.command {
+    let result = dispatch_command(cli.command, &registry, &config_path, log_sender).await;
+
+    if let Err(e) = result {
+        print_error_and_exit(&e);
+    }
+}
+
+async fn dispatch_command<S: ConfigStore>(
+    command: Option<Command>,
+    registry: &RegistryService<S>,
+    config_path: &std::path::Path,
+    log_sender: broadcast::Sender<String>,
+) -> Result<(), String> {
+    match command {
         None => {
             use clap::CommandFactory;
             Cli::command().print_help().ok();
             Ok(())
         }
-        Some(Command::Add(args)) => run_add(&registry, args).map_err(|e| e.to_string()),
+        Some(Command::Add(args)) => run_add(registry, args).map_err(|e| e.to_string()),
         Some(Command::List) => {
-            run_list(&registry, &mut std::io::stdout()).map_err(|e| e.to_string())
+            run_list(registry, &mut std::io::stdout()).map_err(|e| e.to_string())
         }
-        Some(Command::Remove(args)) => run_remove(&registry, args).map_err(|e| e.to_string()),
-        Some(Command::Allowlist(args)) => match args.action {
-            AllowlistAction::Add(modify_args) => {
-                run_allowlist_add(&registry, modify_args).map_err(|e| e.to_string())
-            }
-            AllowlistAction::Remove(modify_args) => {
-                run_allowlist_remove(&registry, modify_args).map_err(|e| e.to_string())
-            }
-            AllowlistAction::Show(show_args) => {
-                run_allowlist_show(&registry, show_args, &mut std::io::stdout())
-                    .map_err(|e| e.to_string())
-            }
-        },
-        Some(Command::Denylist(args)) => match args.action {
-            DenylistAction::Add(modify_args) => {
-                run_denylist_add(&registry, modify_args).map_err(|e| e.to_string())
-            }
-            DenylistAction::Remove(modify_args) => {
-                run_denylist_remove(&registry, modify_args).map_err(|e| e.to_string())
-            }
-            DenylistAction::Show(show_args) => {
-                run_denylist_show(&registry, show_args, &mut std::io::stdout())
-                    .map_err(|e| e.to_string())
-            }
-        },
+        Some(Command::Remove(args)) => run_remove(registry, args).map_err(|e| e.to_string()),
+        Some(Command::Allowlist(args)) => {
+            dispatch_allowlist(registry, args.action).map_err(|e| e.to_string())
+        }
+        Some(Command::Denylist(args)) => {
+            dispatch_denylist(registry, args.action).map_err(|e| e.to_string())
+        }
         Some(Command::Run(args)) => {
             if !args.stdio && !args.http {
                 Err("must specify at least one transport: --stdio and/or --http".to_string())
             } else {
-                run_gateway(&registry, args.stdio, args.http, args.port, log_sender)
+                run_gateway(registry, args.stdio, args.http, args.port, log_sender)
                     .await
                     .map_err(|e| e.to_string())
             }
         }
-        Some(Command::Start(args)) => {
-            if args.foreground {
-                run_foreground_daemon(&registry, args.port, log_sender)
-                    .await
-                    .map_err(|e| e.to_string())
-            } else {
-                start_daemon(&config_path, args.port).map_err(|e| e.to_string())
-            }
-        }
-        Some(Command::Stop) => {
-            let pid_path = pid::default_pid_path().unwrap_or_default();
-            pid::stop_daemon(&pid_path)
-                .map(|()| {
-                    tracing::info!("gateway stopped");
-                })
-                .map_err(|e| e.to_string())
-        }
-        Some(Command::Status) => {
-            let pid_path = pid::default_pid_path().unwrap_or_default();
-            pid::daemon_status(&pid_path)
-                .map(|status| match status {
-                    Some(p) => tracing::info!("gateway is running (PID {p})"),
-                    None => tracing::info!("gateway is not running"),
-                })
-                .map_err(|e| e.to_string())
-        }
+        Some(Command::Start(args)) => dispatch_start(registry, config_path, args, log_sender)
+            .await
+            .map_err(|e| e.to_string()),
+        Some(Command::Stop) => dispatch_stop().map_err(|e| e.to_string()),
+        Some(Command::Status) => dispatch_status().map_err(|e| e.to_string()),
         Some(Command::Restart(args)) => {
-            let pid_path = pid::default_pid_path().unwrap_or_default();
-            // Stop if running, ignore NotRunning error
-            match pid::stop_daemon(&pid_path) {
-                Ok(()) => {}
-                Err(mcp_gateway::daemon::error::DaemonError::NotRunning) => {}
-                Err(e) => return print_error_and_exit(&e.to_string()),
-            }
-            start_daemon(&config_path, args.port).map_err(|e| e.to_string())
+            dispatch_restart(config_path, args.port).map_err(|e| e.to_string())
         }
         Some(Command::Attach(args)) => run_attach(args.port).await.map_err(|e| e.to_string()),
-    };
-
-    if let Err(e) = result {
-        print_error_and_exit(&e);
     }
+}
+
+fn dispatch_allowlist<S: ConfigStore>(
+    registry: &RegistryService<S>,
+    action: AllowlistAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        AllowlistAction::Add(args) => run_allowlist_add(registry, args).map_err(Into::into),
+        AllowlistAction::Remove(args) => run_allowlist_remove(registry, args).map_err(Into::into),
+        AllowlistAction::Show(args) => {
+            run_allowlist_show(registry, args, &mut std::io::stdout()).map_err(Into::into)
+        }
+    }
+}
+
+fn dispatch_denylist<S: ConfigStore>(
+    registry: &RegistryService<S>,
+    action: DenylistAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        DenylistAction::Add(args) => run_denylist_add(registry, args).map_err(Into::into),
+        DenylistAction::Remove(args) => run_denylist_remove(registry, args).map_err(Into::into),
+        DenylistAction::Show(args) => {
+            run_denylist_show(registry, args, &mut std::io::stdout()).map_err(Into::into)
+        }
+    }
+}
+
+async fn dispatch_start<S: ConfigStore>(
+    registry: &RegistryService<S>,
+    config_path: &std::path::Path,
+    args: mcp_gateway::cli::command::StartArgs,
+    log_sender: broadcast::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if args.foreground {
+        run_foreground_daemon(registry, args.port, log_sender)
+            .await
+            .map_err(Into::into)
+    } else {
+        start_daemon(config_path, args.port).map_err(Into::into)
+    }
+}
+
+fn dispatch_stop() -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+    let pid_path = pid::default_pid_path().unwrap_or_default();
+    pid::stop_daemon(&pid_path)?;
+    tracing::info!("gateway stopped");
+    Ok(())
+}
+
+fn dispatch_status() -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+    let pid_path = pid::default_pid_path().unwrap_or_default();
+    match pid::daemon_status(&pid_path)? {
+        Some(p) => tracing::info!("gateway is running (PID {p})"),
+        None => tracing::info!("gateway is not running"),
+    }
+    Ok(())
+}
+
+fn dispatch_restart(
+    config_path: &std::path::Path,
+    port: u16,
+) -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+    let pid_path = pid::default_pid_path().unwrap_or_default();
+    match pid::stop_daemon(&pid_path) {
+        Ok(()) | Err(mcp_gateway::daemon::error::DaemonError::NotRunning) => {}
+        Err(e) => return Err(e),
+    }
+    start_daemon(config_path, port)
 }
 
 fn print_error_and_exit(message: &str) {
@@ -258,9 +290,11 @@ fn start_daemon(
         .map_err(|_| mcp_gateway::daemon::error::DaemonError::PortInUse { port })?;
     drop(std_listener);
 
-    let exe =
-        std::env::current_exe().map_err(|e| mcp_gateway::daemon::error::DaemonError::PidWrite {
-            message: format!("cannot determine executable path: {e}"),
+    let exe = std::env::args_os()
+        .next()
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| mcp_gateway::daemon::error::DaemonError::PidWrite {
+            message: "cannot determine executable path: argv[0] is empty".to_string(),
         })?;
 
     let mut cmd = std::process::Command::new(exe);
