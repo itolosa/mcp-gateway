@@ -67,8 +67,16 @@ jobs:
       - name: Build
         run: cargo build
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@385db9cc6bf65d19775b02084a4b698eaca9a4f2 # v2
+        with:
+          tool: cargo-nextest
+
       - name: Test with coverage
         run: cargo llvm-cov --ignore-filename-regex 'main\.rs' --fail-under-lines 100 --fail-under-functions 100
+
+      - name: E2E happy-path tests
+        run: cargo nextest run --test e2e_test --run-ignored all
 
       - name: Generate LCOV report
         run: cargo llvm-cov report --lcov --ignore-filename-regex 'main\.rs' --output-path lcov.info
