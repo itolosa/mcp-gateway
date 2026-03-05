@@ -94,15 +94,20 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           MCP_GATEWAY_VERSION: ${{ needs.tag.outputs.tag_name }}
 
+      - name: Install cargo-about
+        run: cargo install cargo-about
+
+      - name: Generate third-party licenses
+        run: cargo about generate about.hbs > THIRDPARTY
+
       - name: Package binary
         shell: bash
         run: |
           BIN=mcp-gateway
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            BIN="${BIN}.exe"
-          fi
           ARCHIVE="${BIN}-${{ matrix.target }}.tar.gz"
-          tar czf "${ARCHIVE}" -C "target/${{ matrix.target }}/release" "${BIN}"
+          RELEASE_DIR="target/${{ matrix.target }}/release"
+          cp LICENSE NOTICE THIRDPARTY "${RELEASE_DIR}/"
+          tar czf "${ARCHIVE}" -C "${RELEASE_DIR}" "${BIN}" LICENSE NOTICE THIRDPARTY
           echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 
       - name: Upload artifact

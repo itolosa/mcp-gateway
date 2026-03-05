@@ -1,0 +1,15 @@
+Third-Party Licenses
+====================
+{{#each licenses}}
+{{#if first_of_kind}}
+
+## {{{name}}}
+
+{{{text}}}
+
+Used by:
+{{/if}}
+{{#each used_by}}
+- {{crate.name}} v{{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+{{/each}}

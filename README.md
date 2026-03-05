@@ -147,4 +147,4 @@ MCP Gateway follows a ports-and-adapters (hexagonal) architecture. The core doma
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)
