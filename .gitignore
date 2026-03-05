@@ -2,3 +2,5 @@
 mutants.out*/
 .cargo/
 *.profraw
+CLAUDE.md
+.claude/
