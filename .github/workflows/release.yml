@@ -88,13 +88,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
-      - name: Set release version
-        run: sed -i'' -e "s/^version = .*/version = \"${{ needs.tag.outputs.tag_name }}\"/" Cargo.toml
-
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          MCP_GATEWAY_VERSION: ${{ needs.tag.outputs.tag_name }}
 
       - name: Package binary
         shell: bash

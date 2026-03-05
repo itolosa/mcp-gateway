@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 /// A proxy/firewall for Model Context Protocol (MCP) servers.
 #[derive(Debug, Parser)]
-#[command(version)]
+#[command(version = option_env!("MCP_GATEWAY_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))]
 pub struct Cli {
     /// Path to the configuration file
     #[arg(short, long, global = true)]
