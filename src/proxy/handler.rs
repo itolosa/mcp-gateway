@@ -42,20 +42,15 @@ fn service_error_to_mcp(err: ServiceError) -> ErrorData {
 
 impl ServerHandler for ProxyHandler {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: rmcp::model::ServerCapabilities::builder()
+        ServerInfo::new(
+            rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
                 .build(),
-            server_info: rmcp::model::Implementation {
-                name: "mcp-gateway".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                title: None,
-                description: None,
-                icons: None,
-                website_url: None,
-            },
-            ..Default::default()
-        }
+        )
+        .with_server_info(rmcp::model::Implementation::new(
+            "mcp-gateway",
+            env!("CARGO_PKG_VERSION"),
+        ))
     }
 
     async fn list_tools(
@@ -116,12 +111,10 @@ impl ServerHandler for ProxyHandler {
                 None,
             ));
         }
-        let upstream_request = CallToolRequestParams {
-            name: raw_tool.to_string().into(),
-            arguments: request.arguments,
-            meta: request.meta,
-            task: request.task,
-        };
+        let mut upstream_request = CallToolRequestParams::new(raw_tool.to_string());
+        upstream_request.arguments = request.arguments;
+        upstream_request.meta = request.meta;
+        upstream_request.task = request.task;
         entry
             .service
             .call_tool(upstream_request)
@@ -146,15 +139,8 @@ mod tests {
 
     impl ServerHandler for MockServerA {
         fn get_info(&self) -> ServerInfo {
-            ServerInfo {
-                capabilities: ServerCapabilities::builder().enable_tools().build(),
-                server_info: Implementation {
-                    name: "mock-a".to_string(),
-                    version: "1.0.0".to_string(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+                .with_server_info(Implementation::new("mock-a", "1.0.0"))
         }
 
         async fn list_tools(
@@ -170,11 +156,11 @@ mod tests {
                     }
                 }))
                 .unwrap();
-            Ok(ListToolsResult {
-                tools: vec![Tool::new("echo", "echoes input", schema)],
-                next_cursor: None,
-                meta: None,
-            })
+            Ok(ListToolsResult::with_all_items(vec![Tool::new(
+                "echo",
+                "echoes input",
+                schema,
+            )]))
         }
 
         async fn call_tool(
@@ -202,15 +188,8 @@ mod tests {
 
     impl ServerHandler for MockServerB {
         fn get_info(&self) -> ServerInfo {
-            ServerInfo {
-                capabilities: ServerCapabilities::builder().enable_tools().build(),
-                server_info: Implementation {
-                    name: "mock-b".to_string(),
-                    version: "1.0.0".to_string(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+                .with_server_info(Implementation::new("mock-b", "1.0.0"))
         }
 
         async fn list_tools(
@@ -226,11 +205,11 @@ mod tests {
                     }
                 }))
                 .unwrap();
-            Ok(ListToolsResult {
-                tools: vec![Tool::new("read_file", "reads a file", schema)],
-                next_cursor: None,
-                meta: None,
-            })
+            Ok(ListToolsResult::with_all_items(vec![Tool::new(
+                "read_file",
+                "reads a file",
+                schema,
+            )]))
         }
 
         async fn call_tool(
@@ -437,12 +416,8 @@ mod tests {
         let (client, proxy_h) = create_multi_proxy_client(upstreams, None).await;
 
         // Call alpha__echo
-        let params = CallToolRequestParams {
-            name: "alpha__echo".into(),
-            arguments: Some(serde_json::from_str(r#"{"message":"hello"}"#).unwrap()),
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("alpha__echo")
+            .with_arguments(serde_json::from_str(r#"{"message":"hello"}"#).unwrap());
         let result = client.call_tool(params).await.unwrap();
         let text = result
             .content
@@ -452,12 +427,8 @@ mod tests {
         assert_eq!(text, Some("hello"));
 
         // Call beta__read_file
-        let params = CallToolRequestParams {
-            name: "beta__read_file".into(),
-            arguments: Some(serde_json::from_str(r#"{"path":"/etc/hosts"}"#).unwrap()),
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("beta__read_file")
+            .with_arguments(serde_json::from_str(r#"{"path":"/etc/hosts"}"#).unwrap());
         let result = client.call_tool(params).await.unwrap();
         let text = result
             .content
@@ -477,12 +448,7 @@ mod tests {
     async fn call_tool_without_prefix_returns_error() {
         let (upstreams, handles) = two_server_setup().await;
         let (client, proxy_h) = create_multi_proxy_client(upstreams, None).await;
-        let params = CallToolRequestParams {
-            name: "echo".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("echo");
         let result = client.call_tool(params).await;
         assert!(result.is_err());
         drop(client);
@@ -496,12 +462,7 @@ mod tests {
     async fn call_tool_unknown_server_returns_error() {
         let (upstreams, handles) = two_server_setup().await;
         let (client, proxy_h) = create_multi_proxy_client(upstreams, None).await;
-        let params = CallToolRequestParams {
-            name: "unknown__echo".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("unknown__echo");
         let result = client.call_tool(params).await;
         assert!(result.is_err());
         drop(client);
@@ -526,12 +487,7 @@ mod tests {
             },
         );
         let (client, proxy_h) = create_multi_proxy_client(upstreams, None).await;
-        let params = CallToolRequestParams {
-            name: "alpha__echo".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("alpha__echo");
         let result = client.call_tool(params).await;
         assert!(result.is_err());
         drop(client);
@@ -551,12 +507,7 @@ mod tests {
             },
         );
         let (client, proxy_h) = create_multi_proxy_client(upstreams, None).await;
-        let params = CallToolRequestParams {
-            name: "alpha__nonexistent".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("alpha__nonexistent");
         let result = client.call_tool(params).await;
         assert!(result.is_err());
         drop(client);
@@ -576,12 +527,7 @@ mod tests {
             },
         );
         let (client, proxy_h) = create_multi_proxy_client(upstreams, None).await;
-        let params = CallToolRequestParams {
-            name: "beta__nonexistent".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("beta__nonexistent");
         let result = client.call_tool(params).await;
         assert!(result.is_err());
         drop(client);
@@ -626,12 +572,7 @@ mod tests {
         let (upstreams, handles) = two_server_setup().await;
         let (client, proxy_h) =
             create_multi_proxy_client(upstreams, Some(make_cli_executor())).await;
-        let params = CallToolRequestParams {
-            name: "cli-cat".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("cli-cat");
         let result = client.call_tool(params).await.unwrap();
         let text = result
             .content
@@ -652,12 +593,8 @@ mod tests {
         let (upstreams, handles) = two_server_setup().await;
         let (client, proxy_h) =
             create_multi_proxy_client(upstreams, Some(make_cli_executor())).await;
-        let params = CallToolRequestParams {
-            name: "alpha__echo".into(),
-            arguments: Some(serde_json::from_str(r#"{"message":"upstream"}"#).unwrap()),
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("alpha__echo")
+            .with_arguments(serde_json::from_str(r#"{"message":"upstream"}"#).unwrap());
         let result = client.call_tool(params).await.unwrap();
         let text = result
             .content

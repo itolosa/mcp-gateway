@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, Tool};
 use rmcp::ErrorData;
@@ -80,17 +79,7 @@ fn build_tool_descriptor(name: &str, def: &CliToolDef) -> Tool {
         "type".to_string(),
         serde_json::Value::String("object".to_string()),
     );
-    Tool {
-        name: name.to_string().into(),
-        title: None,
-        description: Some(description.into()),
-        input_schema: Arc::new(schema),
-        output_schema: None,
-        annotations: None,
-        execution: None,
-        icons: None,
-        meta: None,
-    }
+    Tool::new(name.to_string(), description, schema)
 }
 
 #[cfg(test)]
@@ -110,12 +99,9 @@ mod tests {
         name: &str,
         args: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> CallToolRequestParams {
-        CallToolRequestParams {
-            name: name.to_string().into(),
-            arguments: args,
-            meta: None,
-            task: None,
-        }
+        let mut params = CallToolRequestParams::new(name.to_string());
+        params.arguments = args;
+        params
     }
 
     #[test]

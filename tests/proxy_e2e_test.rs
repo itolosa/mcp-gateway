@@ -20,15 +20,8 @@ mod proxy_http_e2e {
 
     impl ServerHandler for EchoServer {
         fn get_info(&self) -> ServerInfo {
-            ServerInfo {
-                capabilities: ServerCapabilities::builder().enable_tools().build(),
-                server_info: Implementation {
-                    name: "echo-test".to_string(),
-                    version: "0.1.0".to_string(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+                .with_server_info(Implementation::new("echo-test", "0.1.0"))
         }
 
         async fn list_tools(
@@ -44,11 +37,11 @@ mod proxy_http_e2e {
                     }
                 }))
                 .expect("static schema");
-            Ok(ListToolsResult {
-                tools: vec![Tool::new("echo", "echoes input", schema)],
-                next_cursor: None,
-                meta: None,
-            })
+            Ok(ListToolsResult::with_all_items(vec![Tool::new(
+                "echo",
+                "echoes input",
+                schema,
+            )]))
         }
 
         async fn call_tool(
@@ -152,12 +145,8 @@ mod proxy_http_e2e {
     async fn http_proxy_e2e_forwards_call_tool() {
         let (client, _dir, ct) = spawn_gateway_http_proxy().await;
 
-        let params = CallToolRequestParams {
-            name: "echo-http__echo".into(),
-            arguments: Some(serde_json::from_str(r#"{"message":"hello-http"}"#).unwrap()),
-            meta: None,
-            task: None,
-        };
+        let params = CallToolRequestParams::new("echo-http__echo")
+            .with_arguments(serde_json::from_str(r#"{"message":"hello-http"}"#).unwrap());
         let result = client.call_tool(params).await.unwrap();
         let text = result
             .content
@@ -244,12 +233,8 @@ mod proxy_e2e {
     async fn proxy_e2e_forwards_call_tool_through_gateway() {
         let (client, _dir) = spawn_gateway_proxy().await;
 
-        let params = rmcp::model::CallToolRequestParams {
-            name: "echo__echo".into(),
-            arguments: Some(serde_json::from_str(r#"{"message":"hello"}"#).unwrap()),
-            meta: None,
-            task: None,
-        };
+        let params = rmcp::model::CallToolRequestParams::new("echo__echo")
+            .with_arguments(serde_json::from_str(r#"{"message":"hello"}"#).unwrap());
         let result = client.call_tool(params).await.unwrap();
         let text = result
             .content

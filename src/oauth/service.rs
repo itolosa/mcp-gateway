@@ -127,8 +127,9 @@ where
         };
         auth_manager.configure_client(config).map_err(auth_err)?;
     } else {
+        let scope_refs: Vec<&str> = oauth_config.scopes.iter().map(|s| s.as_str()).collect();
         auth_manager
-            .register_client("mcp-gateway", &redirect_uri)
+            .register_client("mcp-gateway", &redirect_uri, &scope_refs)
             .await
             .map_err(auth_err)?;
     }
