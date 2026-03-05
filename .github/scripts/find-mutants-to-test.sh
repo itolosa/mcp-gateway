@@ -65,8 +65,7 @@ if [ -n "${COVERED_SHA:-}" ] && [ -f previous-coverage-map.json ]; then
     if [ -s affected_lines.txt ]; then
       sort -u affected_lines.txt | while IFS= read -r line; do
         [ -z "$line" ] && continue
-        escaped=$(echo "$line" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
-        grep "^${escaped}:" current_mutants.txt || true
+        awk -v prefix="$line:" 'substr($0, 1, length(prefix)) == prefix' current_mutants.txt || true
       done | sort -u >> affected_mutants.txt
     fi
   fi
