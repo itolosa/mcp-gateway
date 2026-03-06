@@ -431,7 +431,21 @@ async fn dispatch_oauth<S: ConfigStore>(
     }
 }
 
+const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 async fn connect_upstream(
+    name: &str,
+    entry: McpServerEntry,
+) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ProxyError> {
+    let fut = connect_upstream_inner(name, entry);
+    tokio::time::timeout(UPSTREAM_CONNECT_TIMEOUT, fut)
+        .await
+        .map_err(|_| ProxyError::UpstreamInit {
+            message: format!("{name}: connection timed out after {UPSTREAM_CONNECT_TIMEOUT:?}"),
+        })?
+}
+
+async fn connect_upstream_inner(
     name: &str,
     entry: McpServerEntry,
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ProxyError> {
