@@ -543,6 +543,165 @@ fn attach_when_not_running_prints_error() {
 }
 
 #[test]
+fn run_default_transport_is_accepted() {
+    // `run` with no --transport should be accepted (defaults to stdio)
+    // We can't actually run it (it blocks on stdin), but we can verify --help shows transport
+    cargo_bin_cmd!()
+        .args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("transport"));
+}
+
+#[test]
+fn run_transport_http_is_accepted() {
+    cargo_bin_cmd!()
+        .args(["run", "--transport", "http", "--help"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn run_rejects_invalid_transport() {
+    cargo_bin_cmd!()
+        .args(["run", "--transport", "sse"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}
+
+#[test]
+fn start_rejects_stdio_transport() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .args(["start", "--transport", "stdio"])
+        .assert()
+        .failure()
+        .stderr(contains("only supports --transport http"));
+}
+
+#[test]
+fn start_accepts_explicit_http_transport() {
+    // start --transport http should be accepted (it will fail because port is in use or
+    // no config, but the transport validation itself should pass)
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+    let output = cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .args([
+            "-c",
+            config_path.to_str().unwrap_or_default(),
+            "start",
+            "--transport",
+            "http",
+        ])
+        .output()
+        .unwrap_or_else(|_| unreachable!());
+    // Should not fail with "only supports --transport http"
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("only supports --transport http"),
+        "should accept --transport http"
+    );
+}
+
+#[test]
+fn oauth_login_no_server_with_empty_config() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+
+    // oauth login with empty config should succeed (nothing to authenticate)
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_path.to_str().unwrap_or_default(),
+            "oauth",
+            "login",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn oauth_login_nonexistent_server_fails() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let config_path = dir.path().join("test-config.json");
+
+    cargo_bin_cmd!()
+        .args([
+            "-c",
+            config_path.to_str().unwrap_or_default(),
+            "oauth",
+            "login",
+            "nope",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
+fn oauth_clear_specific_server_no_creds() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .args(["oauth", "clear", "nonexistent-server"])
+        .assert()
+        .success()
+        .stderr(contains("no credentials found"));
+}
+
+#[test]
+fn oauth_clear_all_force_no_creds() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .args(["oauth", "clear", "--force"])
+        .assert()
+        .success()
+        .stderr(contains("no stored credentials"));
+}
+
+#[test]
+fn oauth_clear_specific_server_removes_file() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    // Create a fake credentials file
+    let creds_dir = dir.path().join(".mcp-gateway").join("credentials");
+    std::fs::create_dir_all(&creds_dir).unwrap_or_else(|_| unreachable!());
+    let creds_file = creds_dir.join("my-server.json");
+    std::fs::write(&creds_file, "{}").unwrap_or_else(|_| unreachable!());
+    assert!(creds_file.exists());
+
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .args(["oauth", "clear", "my-server"])
+        .assert()
+        .success()
+        .stderr(contains("cleared credentials"));
+
+    assert!(!creds_file.exists());
+}
+
+#[test]
+fn oauth_clear_all_force_removes_dir() {
+    let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
+    let creds_dir = dir.path().join(".mcp-gateway").join("credentials");
+    std::fs::create_dir_all(&creds_dir).unwrap_or_else(|_| unreachable!());
+    std::fs::write(creds_dir.join("a.json"), "{}").unwrap_or_else(|_| unreachable!());
+    std::fs::write(creds_dir.join("b.json"), "{}").unwrap_or_else(|_| unreachable!());
+
+    cargo_bin_cmd!()
+        .env("HOME", dir.path())
+        .args(["oauth", "clear", "--force"])
+        .assert()
+        .success()
+        .stderr(contains("cleared all"));
+
+    assert!(!creds_dir.exists());
+}
+
+#[test]
 fn status_when_stale_pid_prints_not_running() {
     let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
     let pid_path = dir.path().join(".mcp-gateway.pid");

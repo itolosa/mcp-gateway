@@ -178,6 +178,57 @@ async fn should_hide_denied_tools() {
 
 #[tokio::test]
 #[ignore]
+async fn should_deny_tool_when_in_both_allowlist_and_denylist() {
+    // Given a server with "echo" in both allowlist and denylist
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.json");
+    let config_str = config_path.to_str().unwrap();
+
+    register_stdio_server(config_str, "srv", MULTI_ECHO_SERVER_BIN);
+    run_cli(config_str, &["allowlist", "add", "srv", "echo", "upper"]);
+    run_cli(config_str, &["denylist", "add", "srv", "echo"]);
+
+    // When the gateway runs
+    let client = spawn_gateway(config_str).await;
+
+    // Then denylist wins — echo is hidden, only upper remains
+    let result = client.list_tools(None).await.unwrap();
+    let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+    assert_eq!(tool_names, ["srv__upper"]);
+
+    // And calling the denied tool returns an error
+    let params = CallToolRequestParams::new("srv__echo");
+    assert!(client.call_tool(params).await.is_err());
+}
+
+#[tokio::test]
+#[ignore]
+async fn should_work_with_explicit_transport_stdio() {
+    // Given a registered server
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.json");
+    let config_str = config_path.to_str().unwrap();
+
+    register_stdio_server(config_str, "srv", ECHO_SERVER_BIN);
+
+    // When the gateway runs with explicit --transport stdio
+    let mut cmd = tokio::process::Command::new(GATEWAY_BIN);
+    cmd.args(["-c", config_str, "run", "--transport", "stdio"]);
+    let transport = TokioChildProcess::new(cmd).unwrap();
+    let client: rmcp::service::RunningService<rmcp::RoleClient, ()> =
+        ().serve(transport).await.unwrap();
+
+    // Then tools are listed correctly
+    let result = client.list_tools(None).await.unwrap();
+    assert_eq!(result.tools.len(), 1);
+    assert_eq!(
+        result.tools.first().map(|t| t.name.as_ref()),
+        Some("srv__echo")
+    );
+}
+
+#[tokio::test]
+#[ignore]
 async fn should_return_error_for_unknown_tool() {
     // Given a single server registered
     let dir = tempfile::tempdir().unwrap();
