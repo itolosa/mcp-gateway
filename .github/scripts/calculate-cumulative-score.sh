@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "DEBUG: script started, pwd=$(pwd)"
+ls -la results/ baseline/ previous-killed/ 2>&1 || true
+ls results/mutants-results-*/caught.txt 2>&1 || true
+
 # Calculates the cumulative mutation score by combining:
 # - Previously killed mutants that were NOT retested this run (carry-forward)
 # - Mutants killed in this run
