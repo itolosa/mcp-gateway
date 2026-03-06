@@ -18,6 +18,7 @@ use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::model::HttpConfig;
+use crate::config::model::OAuthConfig;
 use crate::config::model::StdioConfig;
 use crate::oauth;
 use crate::proxy::error::ProxyError;
@@ -148,9 +149,8 @@ pub async fn create_oauth_http_transport(
         custom_headers.insert(header_name, header_value);
     }
 
-    let oauth_config = config.auth.as_ref().ok_or_else(|| ProxyError::OAuthAuth {
-        message: "missing OAuth config".to_string(),
-    })?;
+    let default_config = OAuthConfig::default();
+    let oauth_config = config.auth.as_ref().unwrap_or(&default_config);
 
     Ok(
         oauth::create_oauth_transport(&config.url, oauth_config, server_name, custom_headers)
@@ -346,18 +346,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_oauth_http_transport_missing_auth_config_returns_error() {
+    async fn create_oauth_http_transport_no_auth_config_uses_default() {
         let config = HttpConfig {
-            url: "http://localhost:8080/mcp".to_string(),
+            url: "not a valid url".to_string(),
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec![],
             auth: None,
         };
         let result = create_oauth_http_transport(&config, "test").await;
-        let err = result.err().unwrap();
-        assert!(matches!(err, ProxyError::OAuthAuth { .. }));
-        assert!(err.to_string().contains("missing OAuth config"));
+        assert!(matches!(result, Err(ProxyError::OAuthAuth { .. })));
     }
 
     #[tokio::test]

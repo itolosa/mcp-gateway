@@ -208,8 +208,14 @@ async fn build_handler(
             AllowlistFilter::new(entry.allowed_tools().to_vec()),
             DenylistFilter::new(entry.denied_tools().to_vec()),
         );
-        let service = connect_upstream(&name, entry).await?;
-        upstreams.insert(name, UpstreamEntry { service, filter });
+        match connect_upstream(&name, entry).await {
+            Ok(service) => {
+                upstreams.insert(name, UpstreamEntry { service, filter });
+            }
+            Err(e) => {
+                eprintln!("'{name}' failed to connect: {e}, skipping");
+            }
+        }
     }
     Ok(ProxyHandler::new(upstreams, cli_tools))
 }
@@ -438,22 +444,25 @@ async fn connect_upstream(
                     message: format!("{name}: {e}"),
                 })
         }
-        McpServerEntry::Http(ref config) if config.auth.is_some() => {
-            let transport =
-                mcp_gateway::proxy::runner::create_oauth_http_transport(config, name).await?;
-            ().serve(transport)
-                .await
-                .map_err(|e| ProxyError::UpstreamInit {
-                    message: format!("{name}: {e}"),
-                })
-        }
-        McpServerEntry::Http(config) => {
-            let transport = mcp_gateway::proxy::runner::create_http_transport(&config)?;
-            ().serve(transport)
-                .await
-                .map_err(|e| ProxyError::UpstreamInit {
-                    message: format!("{name}: {e}"),
-                })
+        McpServerEntry::Http(ref config) => {
+            let has_stored_creds = mcp_gateway::oauth::FileCredentialStore::default_path(name)
+                .is_some_and(|p: std::path::PathBuf| p.exists());
+            if config.auth.is_some() || has_stored_creds {
+                let transport =
+                    mcp_gateway::proxy::runner::create_oauth_http_transport(config, name).await?;
+                ().serve(transport)
+                    .await
+                    .map_err(|e| ProxyError::UpstreamInit {
+                        message: format!("{name}: {e}"),
+                    })
+            } else {
+                let transport = mcp_gateway::proxy::runner::create_http_transport(config)?;
+                ().serve(transport)
+                    .await
+                    .map_err(|e| ProxyError::UpstreamInit {
+                        message: format!("{name}: {e}"),
+                    })
+            }
         }
     }
 }
