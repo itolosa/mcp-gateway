@@ -36,8 +36,23 @@ if [ ! -f previous_killed_mutants.txt ]; then
   exit 0
 fi
 
-# 1. Find new mutants (in current but not in previous)
-comm -23 current_mutants.txt previous_mutants.txt > new_mutants.txt || true
+# Strip line:col from mutant strings so shifted lines still match.
+normalize() { sed 's/^\([^:]*\):[0-9][0-9]*:[0-9][0-9]*:/\1:/'; }
+
+# Build paired lookup: normalized_signature TAB original_string (for current mutants)
+paste <(normalize < current_mutants.txt) current_mutants.txt | \
+  LC_ALL=C sort -t$'\t' -k1,1 > current_paired.txt
+cut -f1 current_paired.txt | LC_ALL=C sort -u > current_norm.txt
+
+# 1. Find new mutants (normalized: in current but not in previous)
+normalize < previous_mutants.txt | LC_ALL=C sort -u > previous_norm.txt
+comm -23 current_norm.txt previous_norm.txt > new_norm.txt || true
+if [ -s new_norm.txt ]; then
+  LC_ALL=C join -t$'\t' -1 1 -2 1 current_paired.txt new_norm.txt | \
+    cut -f2 | LC_ALL=C sort -u > new_mutants.txt
+else
+  : > new_mutants.txt
+fi
 
 # 2. Find mutants affected by file changes (using per-test coverage map)
 touch affected_mutants.txt
@@ -82,10 +97,15 @@ fi
 # 3. Combine new + affected mutants
 cat new_mutants.txt affected_mutants.txt 2>/dev/null | sort -u > target_mutants.txt
 
-# 4. Add unproven mutants (not in previous killed list)
+# 4. Add unproven mutants (normalized: not in previous killed list)
 if [ -f previous_killed_mutants.txt ]; then
-  comm -23 current_mutants.txt previous_killed_mutants.txt >> target_mutants.txt
-  sort -u -o target_mutants.txt target_mutants.txt
+  normalize < previous_killed_mutants.txt | LC_ALL=C sort -u > prev_killed_norm.txt
+  comm -23 current_norm.txt prev_killed_norm.txt > unproven_norm.txt
+  if [ -s unproven_norm.txt ]; then
+    LC_ALL=C join -t$'\t' -1 1 -2 1 current_paired.txt unproven_norm.txt | \
+      cut -f2 | LC_ALL=C sort -u >> target_mutants.txt
+    sort -u -o target_mutants.txt target_mutants.txt
+  fi
 fi
 
 if [ ! -s target_mutants.txt ]; then
@@ -99,6 +119,6 @@ NEW_COUNT=$(wc -l < new_mutants.txt | tr -d ' ')
 AFFECTED_COUNT=$(wc -l < affected_mutants.txt | tr -d ' ')
 echo "Found ${COUNT} mutants to test (${NEW_COUNT} new, ${AFFECTED_COUNT} from test changes)"
 
-PATTERN=$(sed 's/[][\\.^$*+?(){}|]/\\&/g' target_mutants.txt | paste -sd'|')
+PATTERN=$(sed 's/[][\\.^$*+?(){}|]/\\&/g' target_mutants.txt | paste -s -d'|' -)
 echo "mode=incremental" >> "$OUTPUT"
 echo "pattern=${PATTERN}" >> "$OUTPUT"
