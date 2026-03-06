@@ -8,7 +8,9 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
-use mcp_gateway::cli::command::{AllowlistAction, Cli, Command, DenylistAction};
+use mcp_gateway::cli::command::{
+    AllowlistAction, Cli, Command, DenylistAction, DownstreamTransport,
+};
 use mcp_gateway::cli::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
     run_denylist_remove, run_denylist_show, run_list, run_remove, run_run,
@@ -75,15 +77,9 @@ async fn dispatch_command<S: ConfigStore>(
         Some(Command::Denylist(args)) => {
             dispatch_denylist(registry, args.action).map_err(|e| e.to_string())
         }
-        Some(Command::Run(args)) => {
-            if !args.stdio && !args.http {
-                Err("must specify at least one transport: --stdio and/or --http".to_string())
-            } else {
-                run_gateway(registry, args.stdio, args.http, args.port, log_sender)
-                    .await
-                    .map_err(|e| e.to_string())
-            }
-        }
+        Some(Command::Run(args)) => run_gateway(registry, args.transport, args.port, log_sender)
+            .await
+            .map_err(|e| e.to_string()),
         Some(Command::Start(args)) => dispatch_start(registry, config_path, args, log_sender)
             .await
             .map_err(|e| e.to_string()),
@@ -93,6 +89,9 @@ async fn dispatch_command<S: ConfigStore>(
             dispatch_restart(config_path, args.port).map_err(|e| e.to_string())
         }
         Some(Command::Attach(args)) => run_attach(args.port).await.map_err(|e| e.to_string()),
+        Some(Command::Oauth(args)) => dispatch_oauth(registry, args)
+            .await
+            .map_err(|e| e.to_string()),
     }
 }
 
@@ -128,6 +127,9 @@ async fn dispatch_start<S: ConfigStore>(
     args: mcp_gateway::cli::command::StartArgs,
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if args.transport != DownstreamTransport::Http {
+        return Err("daemon mode only supports --transport http".into());
+    }
     if args.foreground {
         run_foreground_daemon(registry, args.port, log_sender)
             .await
@@ -172,8 +174,7 @@ fn print_error_and_exit(message: &str) {
 
 async fn run_gateway<S: ConfigStore>(
     registry: &RegistryService<S>,
-    stdio: bool,
-    http: bool,
+    transport: DownstreamTransport,
     port: u16,
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
@@ -186,25 +187,12 @@ async fn run_gateway<S: ConfigStore>(
     run_run(registry, |servers| async move {
         let handler = build_handler(servers, cli_tools).await?;
         let handler = Arc::new(handler);
-        match (stdio, http) {
-            (true, true) => {
-                let ct = CancellationToken::new();
-                let http_handler = Arc::clone(&handler);
-                let http_ct = ct.clone();
-                let http_task = tokio::spawn(async move {
-                    serve_proxy_http(http_handler, port, http_ct, log_sender).await
-                });
-                let stdio_result = serve_proxy(handler, rmcp::transport::io::stdio()).await;
-                ct.cancel();
-                let _ = http_task.await;
-                stdio_result
-            }
-            (true, false) => serve_proxy(handler, rmcp::transport::io::stdio()).await,
-            (_, true) => {
+        match transport {
+            DownstreamTransport::Stdio => serve_proxy(handler, rmcp::transport::io::stdio()).await,
+            DownstreamTransport::Http => {
                 let ct = CancellationToken::new();
                 serve_proxy_http(handler, port, ct, log_sender).await
             }
-            (false, false) => Ok(()),
         }
     })
     .await
@@ -329,6 +317,105 @@ fn spawn_daemon_process(
         .map_err(|e| mcp_gateway::daemon::error::DaemonError::PidWrite {
             message: format!("failed to spawn daemon: {e}"),
         })
+}
+
+async fn dispatch_oauth<S: ConfigStore>(
+    registry: &RegistryService<S>,
+    args: mcp_gateway::cli::command::OAuthArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use mcp_gateway::cli::command::OAuthAction;
+    use mcp_gateway::oauth::FileCredentialStore;
+
+    match args.action {
+        OAuthAction::Clear(clear_args) => {
+            match clear_args.name {
+                Some(name) => {
+                    let path = FileCredentialStore::default_path(&name)
+                        .ok_or("cannot determine credentials path")?;
+                    if path.exists() {
+                        std::fs::remove_file(&path)?;
+                        tracing::info!("cleared credentials for '{name}'");
+                    } else {
+                        tracing::info!("no credentials found for '{name}'");
+                    }
+                }
+                None => {
+                    if !clear_args.force {
+                        eprint!("clear all stored OAuth credentials? [y/N] ");
+                        let mut answer = String::new();
+                        std::io::stdin().read_line(&mut answer)?;
+                        if !answer.trim().eq_ignore_ascii_case("y") {
+                            tracing::info!("aborted");
+                            return Ok(());
+                        }
+                    }
+                    let creds_dir = dirs::home_dir()
+                        .map(|h| h.join(".mcp-gateway").join("credentials"))
+                        .ok_or("cannot determine credentials directory")?;
+                    if creds_dir.exists() {
+                        std::fs::remove_dir_all(&creds_dir)?;
+                        tracing::info!("cleared all stored credentials");
+                    } else {
+                        tracing::info!("no stored credentials found");
+                    }
+                }
+            }
+            Ok(())
+        }
+        OAuthAction::Login(login_args) => {
+            let config = registry.store().load()?;
+            let servers: Vec<_> = match login_args.name {
+                Some(ref name) => {
+                    let entry = config
+                        .mcp_servers
+                        .get(name)
+                        .ok_or_else(|| format!("server '{name}' not found"))?;
+                    vec![(name.clone(), entry.clone())]
+                }
+                None => config
+                    .mcp_servers
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            };
+            for (name, entry) in servers {
+                if let McpServerEntry::Http(ref http_config) = entry {
+                    if let Some(ref oauth_config) = http_config.auth {
+                        let cred_path = FileCredentialStore::default_path(&name);
+                        let has_creds = cred_path.as_ref().is_some_and(|p| p.exists());
+                        if has_creds && login_args.name.is_none() {
+                            tracing::info!("'{name}' already has stored credentials, skipping");
+                            continue;
+                        }
+                        tracing::info!("authenticating '{name}'...");
+                        let headers =
+                            http_config
+                                .headers
+                                .iter()
+                                .map(|(k, v)| {
+                                    Ok((
+                                        http::HeaderName::from_bytes(k.as_bytes())?,
+                                        http::HeaderValue::from_str(v)?,
+                                    ))
+                                })
+                                .collect::<Result<
+                                    std::collections::HashMap<_, _>,
+                                    Box<dyn std::error::Error>,
+                                >>()?;
+                        mcp_gateway::oauth::create_oauth_transport(
+                            &http_config.url,
+                            oauth_config,
+                            &name,
+                            headers,
+                        )
+                        .await?;
+                        tracing::info!("'{name}' authenticated successfully");
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 async fn connect_upstream(

@@ -26,9 +26,9 @@ pub enum Command {
     List,
     /// Remove a registered MCP server
     Remove(RemoveArgs),
-    /// Start the gateway proxy for all registered MCP servers
+    /// Start the gateway proxy in the foreground
     Run(RunArgs),
-    /// Start the gateway as a background daemon (HTTP only)
+    /// Start the gateway as a background daemon
     Start(StartArgs),
     /// Stop the running gateway daemon
     Stop,
@@ -38,6 +38,8 @@ pub enum Command {
     Restart(StartArgs),
     /// Attach to a running gateway daemon and stream logs
     Attach(AttachArgs),
+    /// Manage OAuth authentication for upstream servers
+    Oauth(OAuthArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -49,12 +51,9 @@ pub struct AttachArgs {
 
 #[derive(Debug, Parser)]
 pub struct RunArgs {
-    /// Enable stdio downstream transport
-    #[arg(long)]
-    pub stdio: bool,
-    /// Enable Streamable HTTP downstream transport
-    #[arg(long)]
-    pub http: bool,
+    /// Downstream transport protocol
+    #[arg(long, short, default_value = "stdio")]
+    pub transport: DownstreamTransport,
     /// Port for HTTP transport
     #[arg(long, short, default_value_t = 8080)]
     pub port: u16,
@@ -62,12 +61,50 @@ pub struct RunArgs {
 
 #[derive(Debug, Parser)]
 pub struct StartArgs {
+    /// Downstream transport protocol (only http is supported for daemon mode)
+    #[arg(long, short = 'T', default_value = "http")]
+    pub transport: DownstreamTransport,
     /// Port for HTTP transport
     #[arg(long, short, default_value_t = 8080)]
     pub port: u16,
     /// Run in foreground (used internally by daemon launcher)
     #[arg(long, hide = true)]
     pub foreground: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, ValueEnum)]
+pub enum DownstreamTransport {
+    Stdio,
+    Http,
+}
+
+#[derive(Debug, Parser)]
+pub struct OAuthArgs {
+    #[command(subcommand)]
+    pub action: OAuthAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OAuthAction {
+    /// Run OAuth authentication for servers missing credentials
+    Login(OAuthLoginArgs),
+    /// Clear stored OAuth credentials
+    Clear(OAuthClearArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct OAuthLoginArgs {
+    /// Name of a specific server to authenticate (authenticates all if omitted)
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct OAuthClearArgs {
+    /// Name of the server to clear credentials for (clears all if omitted)
+    pub name: Option<String>,
+    /// Skip confirmation prompt when clearing all credentials
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -321,44 +358,43 @@ mod tests {
     }
 
     #[test]
-    fn parses_run_stdio() {
-        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--stdio"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Run(ref args)) if args.stdio && !args.http
-        ));
-    }
-
-    #[test]
-    fn parses_run_http_with_port() {
-        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--http", "--port", "3000"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Run(ref args)) if !args.stdio && args.http && args.port == 3000
-        ));
-    }
-
-    #[test]
-    fn parses_run_stdio_and_http() {
-        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--stdio", "--http"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Run(ref args)) if args.stdio && args.http && args.port == 8080
-        ));
-    }
-
-    #[test]
-    fn parses_run_no_flags() {
+    fn run_defaults_to_stdio() {
         let cli = Cli::try_parse_from(["mcp-gateway", "run"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Run(ref args)) if !args.stdio && !args.http
+            Some(Command::Run(ref args)) if args.transport == DownstreamTransport::Stdio
+        ));
+    }
+
+    #[test]
+    fn parses_run_transport_stdio() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--transport", "stdio"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run(ref args)) if args.transport == DownstreamTransport::Stdio
+        ));
+    }
+
+    #[test]
+    fn parses_run_transport_http() {
+        let cli = Cli::try_parse_from([
+            "mcp-gateway",
+            "run",
+            "--transport",
+            "http",
+            "--port",
+            "3000",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run(ref args)) if args.transport == DownstreamTransport::Http && args.port == 3000
         ));
     }
 
     #[test]
     fn run_default_port_is_8080() {
-        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--http"]).unwrap();
+        let cli = Cli::try_parse_from(["mcp-gateway", "run", "--transport", "http"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Command::Run(ref args)) if args.port == 8080
@@ -372,11 +408,27 @@ mod tests {
     }
 
     #[test]
-    fn parses_start() {
+    fn run_rejects_invalid_transport() {
+        let result = Cli::try_parse_from(["mcp-gateway", "run", "--transport", "sse"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn start_defaults_to_http() {
         let cli = Cli::try_parse_from(["mcp-gateway", "start"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Start(ref args)) if args.port == 8080 && !args.foreground
+            Some(Command::Start(ref args)) if args.transport == DownstreamTransport::Http
+                && args.port == 8080 && !args.foreground
+        ));
+    }
+
+    #[test]
+    fn parses_start_transport_http() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "start", "--transport", "http"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Start(ref args)) if args.transport == DownstreamTransport::Http
         ));
     }
 
@@ -551,6 +603,82 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Attach(ref args)) if args.port == Some(9090)
+        ));
+    }
+
+    #[test]
+    fn parses_oauth_login_no_server() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "oauth", "login"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Oauth(OAuthArgs {
+                action: OAuthAction::Login(ref args),
+            })) if args.name.is_none()
+        ));
+    }
+
+    #[test]
+    fn parses_oauth_login_with_server() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "oauth", "login", "my-server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Oauth(OAuthArgs {
+                action: OAuthAction::Login(ref args),
+            })) if args.name.as_deref() == Some("my-server")
+        ));
+    }
+
+    #[test]
+    fn parses_oauth_clear_with_server() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "oauth", "clear", "my-server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Oauth(OAuthArgs {
+                action: OAuthAction::Clear(ref args),
+            })) if args.name.as_deref() == Some("my-server") && !args.force
+        ));
+    }
+
+    #[test]
+    fn parses_oauth_clear_all() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "oauth", "clear"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Oauth(OAuthArgs {
+                action: OAuthAction::Clear(ref args),
+            })) if args.name.is_none() && !args.force
+        ));
+    }
+
+    #[test]
+    fn parses_oauth_clear_force() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "oauth", "clear", "--force"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Oauth(OAuthArgs {
+                action: OAuthAction::Clear(ref args),
+            })) if args.name.is_none() && args.force
+        ));
+    }
+
+    #[test]
+    fn parses_oauth_clear_server_with_force() {
+        let cli =
+            Cli::try_parse_from(["mcp-gateway", "oauth", "clear", "my-server", "--force"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Oauth(OAuthArgs {
+                action: OAuthAction::Clear(ref args),
+            })) if args.name.as_deref() == Some("my-server") && args.force
+        ));
+    }
+
+    #[test]
+    fn parses_run_transport_short_flag() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "run", "-t", "http"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run(ref args)) if args.transport == DownstreamTransport::Http
         ));
     }
 }

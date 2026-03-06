@@ -36,7 +36,7 @@ fn run_cli(config_str: &str, args: &[&str]) {
 
 async fn spawn_gateway(config_str: &str) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
     let mut cmd = tokio::process::Command::new(GATEWAY_BIN);
-    cmd.args(["-c", config_str, "run", "--stdio"]);
+    cmd.args(["-c", config_str, "run"]);
     let transport = TokioChildProcess::new(cmd).unwrap();
     ().serve(transport).await.unwrap()
 }

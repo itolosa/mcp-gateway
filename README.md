@@ -52,10 +52,24 @@ mcp-gateway denylist add my-server delete_file
 **3. Run the gateway:**
 
 ```bash
+# Stdio (default) — use this in Claude Desktop / Claude Code mcpServers config
 mcp-gateway run
+
+# HTTP — start as a network server
+mcp-gateway run --transport http --port 8080
 ```
 
-The gateway starts on stdio, connects to all registered servers, and exposes their tools with prefixed names (e.g., `my-server__read_file`, `remote-server__search`). CLI tools are exposed without a prefix.
+The gateway connects to all registered servers and exposes their tools with prefixed names (e.g., `my-server__read_file`, `remote-server__search`). CLI tools are exposed without a prefix.
+
+**4. (Optional) Authenticate OAuth-protected servers:**
+
+```bash
+# Authenticate all servers missing credentials
+mcp-gateway oauth login
+
+# Authenticate a specific server
+mcp-gateway oauth login remote-server
+```
 
 ## CLI Commands
 
@@ -65,8 +79,9 @@ The gateway starts on stdio, connects to all registered servers, and exposes the
 | `add <name> -t http` | Register an HTTP server | `mcp-gateway add api -t http --url https://example.com/mcp` |
 | `list` | List all registered servers | `mcp-gateway list` |
 | `remove <name>` | Remove a registered server | `mcp-gateway remove fs` |
-| `run` | Start the gateway for all servers | `mcp-gateway run` |
-| `start` | Start the gateway as a background daemon | `mcp-gateway start` |
+| `run` | Start the gateway in the foreground (default: stdio) | `mcp-gateway run` |
+| `run --transport http` | Start the gateway with HTTP transport | `mcp-gateway run -t http --port 8080` |
+| `start` | Start the gateway as a background daemon (HTTP) | `mcp-gateway start --port 8080` |
 | `stop` | Stop the running daemon | `mcp-gateway stop` |
 | `status` | Check if the daemon is running | `mcp-gateway status` |
 | `restart` | Restart the daemon | `mcp-gateway restart` |
@@ -77,6 +92,8 @@ The gateway starts on stdio, connects to all registered servers, and exposes the
 | `denylist add <name> <tools...>` | Block specific tools | `mcp-gateway denylist add fs delete_file` |
 | `denylist remove <name> <tools...>` | Remove tools from the denylist | `mcp-gateway denylist remove fs delete_file` |
 | `denylist show <name>` | Show a server's denylist | `mcp-gateway denylist show fs` |
+| `oauth login [name]` | Run OAuth flow for servers missing credentials | `mcp-gateway oauth login remote-api` |
+| `oauth clear [name]` | Clear stored OAuth credentials | `mcp-gateway oauth clear remote-api` |
 
 Use `-c <path>` (or `--config <path>`) on any command to override the default config file (`~/.mcp-gateway.json`).
 
@@ -125,7 +142,7 @@ All state lives in a single JSON file. The CLI commands manage it for you, but h
 
 **CLI tools:** Each entry maps a tool name to a host executable. The gateway pipes the full `tools/call` request as JSON to the command's stdin. The command writes its result to stdout (success) or stderr (error); exit code 0 means success.
 
-**OAuth:** Add an `auth` object to an HTTP server entry. On first `run`, the gateway opens your browser for authorization. Tokens are cached to disk and refreshed automatically.
+**OAuth:** Add an `auth` object to an HTTP server entry. Run `mcp-gateway oauth login` to authenticate before starting the gateway, or the gateway will prompt automatically on first `run`. Tokens are cached to `~/.mcp-gateway/credentials/<server>.json` and refreshed automatically. Use `mcp-gateway oauth clear` to remove stored credentials.
 
 ## Architecture
 
