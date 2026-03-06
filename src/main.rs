@@ -380,36 +380,43 @@ async fn dispatch_oauth<S: ConfigStore>(
             };
             for (name, entry) in servers {
                 if let McpServerEntry::Http(ref http_config) = entry {
-                    if let Some(ref oauth_config) = http_config.auth {
-                        let cred_path = FileCredentialStore::default_path(&name);
-                        let has_creds = cred_path.as_ref().is_some_and(|p| p.exists());
-                        if has_creds && login_args.name.is_none() {
-                            tracing::info!("'{name}' already has stored credentials, skipping");
-                            continue;
+                    let oauth_config = http_config.auth.clone().unwrap_or_default();
+                    let cred_path = FileCredentialStore::default_path(&name);
+                    let has_creds = cred_path.as_ref().is_some_and(|p| p.exists());
+                    if has_creds && login_args.name.is_none() {
+                        eprintln!("'{name}' already has stored credentials, skipping");
+                        continue;
+                    }
+                    eprintln!("authenticating '{name}'...");
+                    let headers =
+                        http_config
+                            .headers
+                            .iter()
+                            .map(|(k, v)| {
+                                Ok((
+                                    http::HeaderName::from_bytes(k.as_bytes())?,
+                                    http::HeaderValue::from_str(v)?,
+                                ))
+                            })
+                            .collect::<Result<
+                                std::collections::HashMap<_, _>,
+                                Box<dyn std::error::Error>,
+                            >>()?;
+                    match mcp_gateway::oauth::create_oauth_transport(
+                        &http_config.url,
+                        &oauth_config,
+                        &name,
+                        headers,
+                    )
+                    .await
+                    {
+                        Ok(_) => eprintln!("'{name}' authenticated successfully"),
+                        Err(e) => {
+                            if login_args.name.is_some() {
+                                return Err(e.into());
+                            }
+                            eprintln!("'{name}' does not support OAuth: {e}");
                         }
-                        tracing::info!("authenticating '{name}'...");
-                        let headers =
-                            http_config
-                                .headers
-                                .iter()
-                                .map(|(k, v)| {
-                                    Ok((
-                                        http::HeaderName::from_bytes(k.as_bytes())?,
-                                        http::HeaderValue::from_str(v)?,
-                                    ))
-                                })
-                                .collect::<Result<
-                                    std::collections::HashMap<_, _>,
-                                    Box<dyn std::error::Error>,
-                                >>()?;
-                        mcp_gateway::oauth::create_oauth_transport(
-                            &http_config.url,
-                            oauth_config,
-                            &name,
-                            headers,
-                        )
-                        .await?;
-                        tracing::info!("'{name}' authenticated successfully");
                     }
                 }
             }

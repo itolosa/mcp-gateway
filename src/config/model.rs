@@ -107,6 +107,18 @@ pub struct OAuthConfig {
     pub credentials_file: Option<String>,
 }
 
+impl Default for OAuthConfig {
+    fn default() -> Self {
+        Self {
+            client_id: None,
+            client_secret: None,
+            scopes: vec![],
+            redirect_port: default_redirect_port(),
+            credentials_file: None,
+        }
+    }
+}
+
 fn default_redirect_port() -> u16 {
     9876
 }
@@ -523,6 +535,16 @@ mod tests {
         let json = r#"{"scopes": []}"#;
         let config: OAuthConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.redirect_port, 9876);
+    }
+
+    #[test]
+    fn oauth_config_default_uses_standard_redirect_port() {
+        let config = OAuthConfig::default();
+        assert_eq!(config.redirect_port, 9876);
+        assert!(config.client_id.is_none());
+        assert!(config.client_secret.is_none());
+        assert!(config.scopes.is_empty());
+        assert!(config.credentials_file.is_none());
     }
 
     #[test]
