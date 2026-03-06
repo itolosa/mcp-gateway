@@ -1,20 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "DEBUG: script started, pwd=$(pwd)"
-ls -la results/ baseline/ previous-killed/ 2>&1 || true
-ls results/mutants-results-*/caught.txt 2>&1 || true
-
 # Calculates the cumulative mutation score by combining:
 # - Previously killed mutants that were NOT retested this run (carry-forward)
 # - Mutants killed in this run
 #
 # Inputs (files in working directory):
 #   baseline/current_mutants.txt           - sorted full mutant list for this commit
-#   results/mutants-results-*/caught.txt   - caught mutants from shard results
-#   results/mutants-results-*/timeout.txt  - timed-out mutants from shard results
-#   results/mutants-results-*/unviable.txt - unviable mutants from shard results
-#   results/mutants-results-*/missed.txt   - missed mutants from shard results
+#   results/**/caught.txt                  - caught mutants from shard results
+#   results/**/timeout.txt                 - timed-out mutants from shard results
+#   results/**/unviable.txt                - unviable mutants from shard results
+#   results/**/missed.txt                  - missed mutants from shard results
 #   previous-killed/killed_mutants.txt     - killed list from previous run (optional)
 #
 # Outputs:
@@ -27,9 +23,13 @@ OUTPUT="${GITHUB_OUTPUT:-/dev/stdout}"
 # "src/file.rs:42:5: replace foo" -> "src/file.rs: replace foo"
 normalize() { sed 's/^\([^:]*\):[0-9][0-9]*:[0-9][0-9]*:/\1:/'; }
 
-# Collect killed (caught + timeout + unviable) and tested from shard results
-cat results/mutants-results-*/caught.txt results/mutants-results-*/timeout.txt results/mutants-results-*/unviable.txt 2>/dev/null | LC_ALL=C sort -u > killed_this_run.txt
-cat results/mutants-results-*/caught.txt results/mutants-results-*/timeout.txt results/mutants-results-*/unviable.txt results/mutants-results-*/missed.txt 2>/dev/null | LC_ALL=C sort -u > tested_this_run.txt
+# Collect killed (caught + timeout + unviable) and tested from shard results.
+# Use find to handle both flat (results/caught.txt) and nested
+# (results/mutants-results-*/caught.txt) directory structures.
+find results -name caught.txt -o -name timeout.txt -o -name unviable.txt \
+  | xargs cat 2>/dev/null | LC_ALL=C sort -u > killed_this_run.txt
+find results -name caught.txt -o -name timeout.txt -o -name unviable.txt -o -name missed.txt \
+  | xargs cat 2>/dev/null | LC_ALL=C sort -u > tested_this_run.txt
 
 # Apply formula: killed = (prev_killed ∩ (current - tested)) ∪ killed_this_run
 # Use normalized signatures (line numbers stripped) so mutants that shifted lines

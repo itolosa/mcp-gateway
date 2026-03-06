@@ -14,7 +14,7 @@ ERRORS=""
 setup_workdir() {
   local workdir
   workdir=$(mktemp -d)
-  mkdir -p "$workdir/baseline" "$workdir/results/mutants-results-0" "$workdir/previous-killed"
+  mkdir -p "$workdir/baseline" "$workdir/results" "$workdir/previous-killed"
   echo "$workdir"
 }
 
@@ -81,10 +81,10 @@ echo ""
 # -------------------------------------------------------------------
 workdir=$(setup_workdir)
 make_mutants "$workdir/baseline/current_mutants.txt" 10
-cp "$workdir/baseline/current_mutants.txt" "$workdir/results/mutants-results-0/caught.txt"
-: > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+cp "$workdir/baseline/current_mutants.txt" "$workdir/results/caught.txt"
+: > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 rm -f "$workdir/previous-killed/killed_mutants.txt"
 run_test "first run, all caught, no previous" "$workdir" "100.0" 10 10
 
@@ -93,10 +93,10 @@ run_test "first run, all caught, no previous" "$workdir" "100.0" 10 10
 # -------------------------------------------------------------------
 workdir=$(setup_workdir)
 make_mutants "$workdir/baseline/current_mutants.txt" 10
-head -8 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/caught.txt"
-tail -2 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+head -8 "$workdir/baseline/current_mutants.txt" > "$workdir/results/caught.txt"
+tail -2 "$workdir/baseline/current_mutants.txt" > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 rm -f "$workdir/previous-killed/killed_mutants.txt"
 run_test "first run, 8 caught 2 missed" "$workdir" "80.0" 8 10
 
@@ -108,10 +108,10 @@ make_mutants "$workdir/baseline/current_mutants.txt" 10
 # Previous run killed all 10
 cp "$workdir/baseline/current_mutants.txt" "$workdir/previous-killed/killed_mutants.txt"
 # This run only tests 2 (the last 2) and catches both
-tail -2 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/caught.txt"
-: > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+tail -2 "$workdir/baseline/current_mutants.txt" > "$workdir/results/caught.txt"
+: > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 run_test "incremental, carry forward 8 + catch 2 = 10" "$workdir" "100.0" 10 10
 
 # -------------------------------------------------------------------
@@ -121,10 +121,10 @@ workdir=$(setup_workdir)
 make_mutants "$workdir/baseline/current_mutants.txt" 10
 cp "$workdir/baseline/current_mutants.txt" "$workdir/previous-killed/killed_mutants.txt"
 # This run retests all 10 but misses 1
-head -9 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/caught.txt"
-tail -1 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+head -9 "$workdir/baseline/current_mutants.txt" > "$workdir/results/caught.txt"
+tail -1 "$workdir/baseline/current_mutants.txt" > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 run_test "incremental, retest all, 1 now missed = 9/10" "$workdir" "90.0" 9 10
 
 # -------------------------------------------------------------------
@@ -133,10 +133,10 @@ run_test "incremental, retest all, 1 now missed = 9/10" "$workdir" "90.0" 9 10
 workdir=$(setup_workdir)
 make_mutants "$workdir/baseline/current_mutants.txt" 10
 rm -f "$workdir/previous-killed/killed_mutants.txt"
-head -5 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/caught.txt"
-: > "$workdir/results/mutants-results-0/missed.txt"
-sed -n '6,8p' "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/timeout.txt"
-sed -n '9,10p' "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/unviable.txt"
+head -5 "$workdir/baseline/current_mutants.txt" > "$workdir/results/caught.txt"
+: > "$workdir/results/missed.txt"
+sed -n '6,8p' "$workdir/baseline/current_mutants.txt" > "$workdir/results/timeout.txt"
+sed -n '9,10p' "$workdir/baseline/current_mutants.txt" > "$workdir/results/unviable.txt"
 run_test "caught + timeout + unviable all count as killed" "$workdir" "100.0" 10 10
 
 # -------------------------------------------------------------------
@@ -144,10 +144,10 @@ run_test "caught + timeout + unviable all count as killed" "$workdir" "100.0" 10
 # -------------------------------------------------------------------
 workdir=$(setup_workdir)
 : > "$workdir/baseline/current_mutants.txt"
-: > "$workdir/results/mutants-results-0/caught.txt"
-: > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+: > "$workdir/results/caught.txt"
+: > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 rm -f "$workdir/previous-killed/killed_mutants.txt"
 run_test "empty total = 100%" "$workdir" "100.0" 0 0
 
@@ -164,10 +164,10 @@ make_mutants "$workdir/baseline/current_mutants.txt" 10 50
 # Previous killed list has mutants at old lines (10,20,...,100)
 make_mutants "$workdir/previous-killed/killed_mutants.txt" 10 10
 # Retested 2 mutants at new lines, caught both
-head -2 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/caught.txt"
-: > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+head -2 "$workdir/baseline/current_mutants.txt" > "$workdir/results/caught.txt"
+: > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 run_test "LINE SHIFT: 8 carry forward + 2 caught = 10" "$workdir" "100.0" 10 10
 
 # -------------------------------------------------------------------
@@ -191,10 +191,10 @@ workdir=$(setup_workdir)
 # Previous killed: fn_1..fn_10 at old lines 10..100
 make_mutants "$workdir/previous-killed/killed_mutants.txt" 10 10
 # Only test fn_11, catch it
-grep "fn_11" "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/caught.txt"
-: > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+grep "fn_11" "$workdir/baseline/current_mutants.txt" > "$workdir/results/caught.txt"
+: > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 run_test "LINE SHIFT: shifted+removed+added, carry forward works" "$workdir" "100.0" 10 10
 
 # -------------------------------------------------------------------
@@ -204,10 +204,10 @@ workdir=$(setup_workdir)
 make_mutants "$workdir/baseline/current_mutants.txt" 10
 rm -f "$workdir/previous-killed/killed_mutants.txt"
 mkdir -p "$workdir/results/mutants-results-1"
-head -5 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/caught.txt"
-: > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+head -5 "$workdir/baseline/current_mutants.txt" > "$workdir/results/caught.txt"
+: > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 tail -5 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-1/caught.txt"
 : > "$workdir/results/mutants-results-1/missed.txt"
 : > "$workdir/results/mutants-results-1/timeout.txt"
@@ -220,10 +220,10 @@ run_test "multiple shards, all caught" "$workdir" "100.0" 10 10
 workdir=$(setup_workdir)
 make_mutants "$workdir/baseline/current_mutants.txt" 10
 rm -f "$workdir/previous-killed/killed_mutants.txt"
-head -7 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/caught.txt"
-tail -3 "$workdir/baseline/current_mutants.txt" > "$workdir/results/mutants-results-0/missed.txt"
-: > "$workdir/results/mutants-results-0/timeout.txt"
-: > "$workdir/results/mutants-results-0/unviable.txt"
+head -7 "$workdir/baseline/current_mutants.txt" > "$workdir/results/caught.txt"
+tail -3 "$workdir/baseline/current_mutants.txt" > "$workdir/results/missed.txt"
+: > "$workdir/results/timeout.txt"
+: > "$workdir/results/unviable.txt"
 output_file="$workdir/github_output.txt"
 touch "$output_file"
 (cd "$workdir" && GITHUB_OUTPUT="$output_file" LC_ALL=C bash "$CALC_SCRIPT" > /dev/null 2>&1)
@@ -246,7 +246,7 @@ rm -rf "$workdir"
 if [ -d "$SCRIPT_DIR/fixtures/22765707587" ]; then
   workdir=$(setup_workdir)
   cp "$SCRIPT_DIR/fixtures/22765707587/baseline/current_mutants.txt" "$workdir/baseline/"
-  cp "$SCRIPT_DIR/fixtures/22765707587/results/mutants-results-0/"* "$workdir/results/mutants-results-0/"
+  cp "$SCRIPT_DIR/fixtures/22765707587/results/"* "$workdir/results/"
   cp "$SCRIPT_DIR/fixtures/22765707587/previous-killed/killed_mutants.txt" "$workdir/previous-killed/"
   run_test "REPLAY run-22765707587: line shift with real data" "$workdir" "100.0" 232 232
 fi
