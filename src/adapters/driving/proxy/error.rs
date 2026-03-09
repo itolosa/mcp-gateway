@@ -1,6 +1,6 @@
+use crate::adapters::driven::oauth::OAuthError;
 use crate::config::error::ConfigError;
-use crate::oauth::OAuthError;
-use crate::registry::error::RegistryError;
+use crate::hexagon::usecases::registry_error::RegistryError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyError {

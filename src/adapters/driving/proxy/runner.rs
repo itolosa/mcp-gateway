@@ -17,18 +17,18 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
+use super::error::ProxyError;
+use crate::adapters::driven::oauth;
 use crate::config::model::HttpConfig;
 use crate::config::model::OAuthConfig;
 use crate::config::model::StdioConfig;
-use crate::oauth;
-use crate::proxy::error::ProxyError;
-use crate::proxy::handler::ProxyHandler;
 
-pub async fn serve_proxy<T, E, A>(
-    handler: Arc<ProxyHandler>,
+pub async fn serve_proxy<H, T, E, A>(
+    handler: Arc<H>,
     downstream_transport: T,
 ) -> Result<(), ProxyError>
 where
+    H: rmcp::ServerHandler,
     T: rmcp::transport::IntoTransport<rmcp::RoleServer, E, A>,
     E: std::error::Error + Send + Sync + 'static,
 {
@@ -43,23 +43,25 @@ where
     Ok(())
 }
 
-pub(crate) async fn serve_proxy_http_on_listener(
-    handler: Arc<ProxyHandler>,
+pub(crate) async fn serve_proxy_http_on_listener<H>(
+    handler: Arc<H>,
     listener: tokio::net::TcpListener,
     ct: CancellationToken,
     log_sender: broadcast::Sender<String>,
-) -> Result<(), ProxyError> {
+) -> Result<(), ProxyError>
+where
+    H: rmcp::ServerHandler + 'static,
+{
     let config = StreamableHttpServerConfig {
         cancellation_token: ct.clone(),
         ..Default::default()
     };
     let h = handler;
-    let service: StreamableHttpService<Arc<ProxyHandler>, LocalSessionManager> =
-        StreamableHttpService::new(
-            move || Ok(Arc::clone(&h)),
-            Arc::new(LocalSessionManager::default()),
-            config,
-        );
+    let service: StreamableHttpService<Arc<H>, LocalSessionManager> = StreamableHttpService::new(
+        move || Ok(Arc::clone(&h)),
+        Arc::new(LocalSessionManager::default()),
+        config,
+    );
     let router = axum::Router::new()
         .route("/logs", get(logs_handler))
         .with_state(log_sender)
@@ -87,8 +89,8 @@ fn downstream_init_err(e: impl std::fmt::Display) -> ProxyError {
     }
 }
 
-pub async fn serve_proxy_http(
-    handler: Arc<ProxyHandler>,
+pub async fn serve_proxy_http<H: rmcp::ServerHandler + 'static>(
+    handler: Arc<H>,
     port: u16,
     ct: CancellationToken,
     log_sender: broadcast::Sender<String>,
@@ -162,8 +164,10 @@ pub async fn create_oauth_http_transport(
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::adapters::driven::{NullCliRunner, RmcpUpstreamClient};
+    use crate::adapters::driving::McpAdapter;
     use crate::config::model::HttpConfig;
-    use crate::proxy::handler::UpstreamEntry;
+    use crate::hexagon::usecases::{Gateway, UpstreamEntry};
     use rmcp::model::*;
     use rmcp::ServerHandler;
     use std::collections::BTreeMap;
@@ -269,13 +273,26 @@ mod tests {
         }
     }
 
-    fn passthrough_filter(
-    ) -> crate::filter::CompoundFilter<crate::filter::AllowlistFilter, crate::filter::DenylistFilter>
-    {
-        crate::filter::CompoundFilter::new(
-            crate::filter::AllowlistFilter::new(vec![]),
-            crate::filter::DenylistFilter::new(vec![]),
+    fn passthrough_filter() -> crate::adapters::driven::filter::CompoundFilter<
+        crate::adapters::driven::filter::AllowlistFilter,
+        crate::adapters::driven::filter::DenylistFilter,
+    > {
+        crate::adapters::driven::filter::CompoundFilter::new(
+            crate::adapters::driven::filter::AllowlistFilter::new(vec![]),
+            crate::adapters::driven::filter::DenylistFilter::new(vec![]),
         )
+    }
+
+    fn empty_adapter() -> Arc<McpAdapter<RmcpUpstreamClient, NullCliRunner>> {
+        let gateway = Gateway::new(BTreeMap::new(), NullCliRunner);
+        Arc::new(McpAdapter::new(gateway))
+    }
+
+    fn adapter_with_upstreams(
+        upstreams: BTreeMap<String, UpstreamEntry<RmcpUpstreamClient>>,
+    ) -> Arc<McpAdapter<RmcpUpstreamClient, NullCliRunner>> {
+        let gateway = Gateway::new(upstreams, NullCliRunner);
+        Arc::new(McpAdapter::new(gateway))
     }
 
     #[tokio::test]
@@ -296,11 +313,11 @@ mod tests {
         upstreams.insert(
             "test".to_string(),
             UpstreamEntry {
-                service: upstream,
+                client: RmcpUpstreamClient::new(upstream),
                 filter: passthrough_filter(),
             },
         );
-        let handler = Arc::new(ProxyHandler::new(upstreams, None));
+        let handler = adapter_with_upstreams(upstreams);
 
         let result = serve_proxy(handler, downstream_server_t).await;
         assert!(matches!(result, Err(ProxyError::DownstreamInit { .. })));
@@ -324,11 +341,11 @@ mod tests {
         upstreams.insert(
             "test".to_string(),
             UpstreamEntry {
-                service: upstream,
+                client: RmcpUpstreamClient::new(upstream),
                 filter: passthrough_filter(),
             },
         );
-        let handler = Arc::new(ProxyHandler::new(upstreams, None));
+        let handler = adapter_with_upstreams(upstreams);
 
         let proxy_handle =
             tokio::spawn(async move { serve_proxy(handler, downstream_server_t).await });
@@ -336,6 +353,17 @@ mod tests {
         let client = ().serve(downstream_client_t).await.unwrap();
         let tools = client.list_tools(None).await.unwrap();
         assert!(tools.tools.is_empty());
+
+        // Also exercise call_tool to cover error paths for this type instantiation
+        let result = client
+            .call_tool(rmcp::model::CallToolRequestParams::new("no_prefix"))
+            .await;
+        assert!(result.is_err());
+
+        let result = client
+            .call_tool(rmcp::model::CallToolRequestParams::new("unknown__tool"))
+            .await;
+        assert!(result.is_err());
 
         drop(client);
 
@@ -450,7 +478,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_proxy_http_on_listener_starts_and_cancels() {
-        let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
+        let handler = empty_adapter();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ct = CancellationToken::new();
         let ct2 = ct.clone();
@@ -465,7 +493,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_proxy_http_on_listener_accepts_mcp_client() {
-        let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
+        let handler = empty_adapter();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let ct = CancellationToken::new();
@@ -494,7 +522,7 @@ mod tests {
     async fn serve_proxy_http_port_in_use_returns_error() {
         let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
+        let handler = empty_adapter();
         let ct = CancellationToken::new();
         let sender = dummy_log_sender();
         let result = serve_proxy_http(handler, port, ct, sender).await;
@@ -503,7 +531,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_proxy_http_starts_on_free_port_and_cancels() {
-        let handler = Arc::new(ProxyHandler::new(BTreeMap::new(), None));
+        let handler = empty_adapter();
         let ct = CancellationToken::new();
         let ct2 = ct.clone();
         let sender = dummy_log_sender();

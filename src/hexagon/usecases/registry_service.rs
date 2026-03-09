@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
+use super::registry_error::RegistryError;
 use crate::config::model::McpServerEntry;
 use crate::config::store::ConfigStore;
-use crate::registry::error::RegistryError;
 
 pub struct RegistryService<S: ConfigStore> {
     store: S,

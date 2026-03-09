@@ -73,13 +73,15 @@ jobs:
           tool: cargo-nextest
 
       - name: Test with coverage
-        run: cargo llvm-cov --ignore-filename-regex 'main\.rs' --fail-under-lines 100 --fail-under-functions 100
+        run: cargo llvm-cov --ignore-filename-regex 'main\.rs' --no-report
+
+      - name: Check 100% coverage (DA/FNF/FNH from LCOV; avoids phantom generic instantiation misses in LF/LH)
+        run: |
+          cargo llvm-cov report --lcov --ignore-filename-regex 'main\.rs' --output-path lcov.info
+          python3 scripts/check_coverage.py lcov.info
 
       - name: E2E happy-path tests
         run: cargo nextest run --test e2e_test --run-ignored all
-
-      - name: Generate LCOV report
-        run: cargo llvm-cov report --lcov --ignore-filename-regex 'main\.rs' --output-path lcov.info
 
       - name: Upload coverage to Codacy
         if: env.CODACY_PROJECT_TOKEN != ''

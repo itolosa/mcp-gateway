@@ -172,6 +172,225 @@ mod proxy_http_e2e {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod proxy_http_negative {
+    use rmcp::transport::child_process::TokioChildProcess;
+    use rmcp::ServiceExt;
+    use tokio_util::sync::CancellationToken;
+
+    const GATEWAY_BIN: &str = env!("CARGO_BIN_EXE_mcp-gateway");
+    const ECHO_SERVER_BIN: &str = env!("CARGO_BIN_EXE_echo-mcp-server");
+
+    fn register_server(config_str: &str, name: &str, transport: &str, target_args: &[&str]) {
+        let mut args = vec!["-c", config_str, "add", name, "-t", transport];
+        args.extend_from_slice(target_args);
+        let status = std::process::Command::new(GATEWAY_BIN)
+            .args(&args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    async fn spawn_gateway(
+        config_str: &str,
+    ) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+        let mut cmd = tokio::process::Command::new(GATEWAY_BIN);
+        cmd.args(["-c", config_str, "run"]);
+        let transport = TokioChildProcess::new(cmd).unwrap();
+        ().serve(transport).await.unwrap()
+    }
+
+    /// Spawn an HTTP server that always returns 401 Unauthorized.
+    async fn spawn_auth_rejecting_server() -> (String, CancellationToken) {
+        let ct = CancellationToken::new();
+        let router = axum::Router::new().fallback(|| async {
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                "Unauthorized: invalid credentials",
+            )
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let ct_clone = ct.clone();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { ct_clone.cancelled_owned().await })
+                .await;
+        });
+        (format!("http://127.0.0.1:{}/mcp", addr.port()), ct)
+    }
+
+    /// Spawn an HTTP server that returns HTML (not MCP protocol).
+    async fn spawn_non_mcp_server() -> (String, CancellationToken) {
+        let ct = CancellationToken::new();
+        let router = axum::Router::new().fallback(|| async {
+            axum::response::Html("<html><body>Not an MCP server</body></html>")
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let ct_clone = ct.clone();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { ct_clone.cancelled_owned().await })
+                .await;
+        });
+        (format!("http://127.0.0.1:{}/mcp", addr.port()), ct)
+    }
+
+    /// Spawn an HTTP server that always returns 500 Internal Server Error.
+    async fn spawn_error_server() -> (String, CancellationToken) {
+        let ct = CancellationToken::new();
+        let router = axum::Router::new().fallback(|| async {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+            )
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let ct_clone = ct.clone();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { ct_clone.cancelled_owned().await })
+                .await;
+        });
+        (format!("http://127.0.0.1:{}/mcp", addr.port()), ct)
+    }
+
+    // Scenario: HTTP upstream rejects authentication (401).
+    // Gateway should skip it and serve remaining upstreams.
+    #[tokio::test]
+    async fn http_upstream_auth_rejection_is_skipped() {
+        let (url, ct) = spawn_auth_rejecting_server().await;
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let config_str = config_path.to_str().unwrap();
+
+        // Register a valid stdio server and the auth-rejecting HTTP server
+        register_server(config_str, "good", "stdio", &["--command", ECHO_SERVER_BIN]);
+        register_server(config_str, "auth-reject", "http", &["--url", &url]);
+
+        // When the gateway runs
+        let client = spawn_gateway(config_str).await;
+
+        // Then only the valid server's tools are available
+        let result = client.list_tools(None).await.unwrap();
+        let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+        assert_eq!(tool_names, ["good__echo"]);
+
+        drop(client);
+        ct.cancel();
+    }
+
+    // Scenario: HTTP upstream returns non-MCP content (HTML).
+    // Gateway should skip it and serve remaining upstreams.
+    #[tokio::test]
+    async fn http_upstream_non_mcp_protocol_is_skipped() {
+        let (url, ct) = spawn_non_mcp_server().await;
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let config_str = config_path.to_str().unwrap();
+
+        register_server(config_str, "good", "stdio", &["--command", ECHO_SERVER_BIN]);
+        register_server(config_str, "not-mcp", "http", &["--url", &url]);
+
+        // When the gateway runs
+        let client = spawn_gateway(config_str).await;
+
+        // Then only the valid server's tools are available
+        let result = client.list_tools(None).await.unwrap();
+        let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+        assert_eq!(tool_names, ["good__echo"]);
+
+        drop(client);
+        ct.cancel();
+    }
+
+    // Scenario: HTTP upstream returns 500 errors.
+    // Gateway should skip it and serve remaining upstreams.
+    #[tokio::test]
+    async fn http_upstream_server_error_is_skipped() {
+        let (url, ct) = spawn_error_server().await;
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let config_str = config_path.to_str().unwrap();
+
+        register_server(config_str, "good", "stdio", &["--command", ECHO_SERVER_BIN]);
+        register_server(config_str, "erroring", "http", &["--url", &url]);
+
+        // When the gateway runs
+        let client = spawn_gateway(config_str).await;
+
+        // Then only the valid server's tools are available
+        let result = client.list_tools(None).await.unwrap();
+        let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+        assert_eq!(tool_names, ["good__echo"]);
+
+        drop(client);
+        ct.cancel();
+    }
+
+    // Scenario: All HTTP upstreams fail. Gateway starts with no tools.
+    #[tokio::test]
+    async fn all_http_upstreams_failing_results_in_empty_tools() {
+        let (url1, ct1) = spawn_auth_rejecting_server().await;
+        let (url2, ct2) = spawn_error_server().await;
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let config_str = config_path.to_str().unwrap();
+
+        register_server(config_str, "reject", "http", &["--url", &url1]);
+        register_server(config_str, "error", "http", &["--url", &url2]);
+
+        // When the gateway runs
+        let client = spawn_gateway(config_str).await;
+
+        // Then no tools are available
+        let result = client.list_tools(None).await.unwrap();
+        assert!(result.tools.is_empty());
+
+        drop(client);
+        ct1.cancel();
+        ct2.cancel();
+    }
+
+    // Scenario: HTTP upstream at a valid server but wrong path (404).
+    #[tokio::test]
+    async fn http_upstream_wrong_path_is_skipped() {
+        // Use the auth-rejecting server but point to /wrong-path
+        let ct = CancellationToken::new();
+        let router = axum::Router::new()
+            .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let ct_clone = ct.clone();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { ct_clone.cancelled_owned().await })
+                .await;
+        });
+        let url = format!("http://127.0.0.1:{}/wrong-path", addr.port());
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let config_str = config_path.to_str().unwrap();
+
+        register_server(config_str, "good", "stdio", &["--command", ECHO_SERVER_BIN]);
+        register_server(config_str, "wrong-path", "http", &["--url", &url]);
+
+        // When the gateway runs
+        let client = spawn_gateway(config_str).await;
+
+        // Then only the valid server's tools are available
+        let result = client.list_tools(None).await.unwrap();
+        let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_ref()).collect();
+        assert_eq!(tool_names, ["good__echo"]);
+
+        drop(client);
+        ct.cancel();
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 mod proxy_e2e {
     use rmcp::transport::child_process::TokioChildProcess;

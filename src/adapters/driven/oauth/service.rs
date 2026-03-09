@@ -6,10 +6,10 @@ use rmcp::transport::auth::{AuthClient, AuthError, AuthorizationManager, OAuthCl
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 
+use super::callback::{run_callback_on_listener, CallbackParams};
+use super::credentials::FileCredentialStore;
+use super::error::OAuthError;
 use crate::config::model::OAuthConfig;
-use crate::oauth::callback::{run_callback_on_listener, CallbackParams};
-use crate::oauth::credentials::FileCredentialStore;
-use crate::oauth::error::OAuthError;
 
 pub async fn create_oauth_transport(
     server_url: &str,

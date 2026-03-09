@@ -8,24 +8,25 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
-use mcp_gateway::cli::command::{
+use mcp_gateway::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
+use mcp_gateway::adapters::driven::{NullCliRunner, ProcessCliRunner, RmcpUpstreamClient};
+use mcp_gateway::adapters::driving::cli::command::{
     AllowlistAction, Cli, Command, DenylistAction, DownstreamTransport,
 };
-use mcp_gateway::cli::runner::{
+use mcp_gateway::adapters::driving::cli::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
     run_denylist_remove, run_denylist_show, run_list, run_remove, run_run,
 };
-use mcp_gateway::cli_tools::CliToolExecutor;
+use mcp_gateway::adapters::driving::daemon::log_broadcast::BroadcastLayer;
+use mcp_gateway::adapters::driving::daemon::pid;
+use mcp_gateway::adapters::driving::proxy::error::ProxyError;
+use mcp_gateway::adapters::driving::proxy::runner::{serve_proxy, serve_proxy_http};
+use mcp_gateway::adapters::driving::McpAdapter;
 use mcp_gateway::config::default_config_path;
 use mcp_gateway::config::model::McpServerEntry;
 use mcp_gateway::config::store::{ConfigStore, FileConfigStore};
-use mcp_gateway::daemon::log_broadcast::BroadcastLayer;
-use mcp_gateway::daemon::pid;
-use mcp_gateway::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
-use mcp_gateway::proxy::error::ProxyError;
-use mcp_gateway::proxy::handler::{ProxyHandler, UpstreamEntry};
-use mcp_gateway::proxy::runner::{serve_proxy, serve_proxy_http};
-use mcp_gateway::registry::service::RegistryService;
+use mcp_gateway::hexagon::usecases::registry_service::RegistryService;
+use mcp_gateway::hexagon::usecases::{Gateway, UpstreamEntry};
 
 #[tokio::main]
 async fn main() {
@@ -124,7 +125,7 @@ fn dispatch_denylist<S: ConfigStore>(
 async fn dispatch_start<S: ConfigStore>(
     registry: &RegistryService<S>,
     config_path: &std::path::Path,
-    args: mcp_gateway::cli::command::StartArgs,
+    args: mcp_gateway::adapters::driving::cli::command::StartArgs,
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.transport != DownstreamTransport::Http {
@@ -139,14 +140,14 @@ async fn dispatch_start<S: ConfigStore>(
     }
 }
 
-fn dispatch_stop() -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+fn dispatch_stop() -> Result<(), mcp_gateway::adapters::driving::daemon::error::DaemonError> {
     let pid_path = pid::default_pid_path().unwrap_or_default();
     pid::stop_daemon(&pid_path)?;
     tracing::info!("gateway stopped");
     Ok(())
 }
 
-fn dispatch_status() -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+fn dispatch_status() -> Result<(), mcp_gateway::adapters::driving::daemon::error::DaemonError> {
     let pid_path = pid::default_pid_path().unwrap_or_default();
     match pid::daemon_status(&pid_path)? {
         Some(p) => tracing::info!("gateway is running (PID {p})"),
@@ -158,10 +159,10 @@ fn dispatch_status() -> Result<(), mcp_gateway::daemon::error::DaemonError> {
 fn dispatch_restart(
     config_path: &std::path::Path,
     port: u16,
-) -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+) -> Result<(), mcp_gateway::adapters::driving::daemon::error::DaemonError> {
     let pid_path = pid::default_pid_path().unwrap_or_default();
     match pid::stop_daemon(&pid_path) {
-        Ok(()) | Err(mcp_gateway::daemon::error::DaemonError::NotRunning) => {}
+        Ok(()) | Err(mcp_gateway::adapters::driving::daemon::error::DaemonError::NotRunning) => {}
         Err(e) => return Err(e),
     }
     start_daemon(config_path, port)
@@ -179,29 +180,43 @@ async fn run_gateway<S: ConfigStore>(
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
-    let cli_tools = if gateway_config.cli_tools.is_empty() {
-        None
-    } else {
-        Some(CliToolExecutor::new(gateway_config.cli_tools))
-    };
+    let has_cli_tools = !gateway_config.cli_tools.is_empty();
+    let cli_tools = gateway_config.cli_tools;
     run_run(registry, |servers| async move {
-        let handler = build_handler(servers, cli_tools).await?;
-        let handler = Arc::new(handler);
-        match transport {
-            DownstreamTransport::Stdio => serve_proxy(handler, rmcp::transport::io::stdio()).await,
-            DownstreamTransport::Http => {
-                let ct = CancellationToken::new();
-                serve_proxy_http(handler, port, ct, log_sender).await
+        let upstreams = build_upstreams(servers).await?;
+        if has_cli_tools {
+            let cli_runner = ProcessCliRunner::new(cli_tools);
+            let gateway = Gateway::new(upstreams, cli_runner);
+            let adapter = Arc::new(McpAdapter::new(gateway));
+            match transport {
+                DownstreamTransport::Stdio => {
+                    serve_proxy(adapter, rmcp::transport::io::stdio()).await
+                }
+                DownstreamTransport::Http => {
+                    let ct = CancellationToken::new();
+                    serve_proxy_http(adapter, port, ct, log_sender).await
+                }
+            }
+        } else {
+            let gateway = Gateway::new(upstreams, NullCliRunner);
+            let adapter = Arc::new(McpAdapter::new(gateway));
+            match transport {
+                DownstreamTransport::Stdio => {
+                    serve_proxy(adapter, rmcp::transport::io::stdio()).await
+                }
+                DownstreamTransport::Http => {
+                    let ct = CancellationToken::new();
+                    serve_proxy_http(adapter, port, ct, log_sender).await
+                }
             }
         }
     })
     .await
 }
 
-async fn build_handler(
+async fn build_upstreams(
     servers: BTreeMap<String, McpServerEntry>,
-    cli_tools: Option<CliToolExecutor>,
-) -> Result<ProxyHandler, ProxyError> {
+) -> Result<BTreeMap<String, UpstreamEntry<RmcpUpstreamClient>>, ProxyError> {
     let mut upstreams = BTreeMap::new();
     for (name, entry) in servers {
         let filter = CompoundFilter::new(
@@ -210,14 +225,20 @@ async fn build_handler(
         );
         match connect_upstream(&name, entry).await {
             Ok(service) => {
-                upstreams.insert(name, UpstreamEntry { service, filter });
+                upstreams.insert(
+                    name,
+                    UpstreamEntry {
+                        client: RmcpUpstreamClient::new(service),
+                        filter,
+                    },
+                );
             }
             Err(e) => {
                 eprintln!("'{name}' failed to connect: {e}, skipping");
             }
         }
     }
-    Ok(ProxyHandler::new(upstreams, cli_tools))
+    Ok(upstreams)
 }
 
 async fn run_foreground_daemon<S: ConfigStore>(
@@ -226,14 +247,10 @@ async fn run_foreground_daemon<S: ConfigStore>(
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
-    let cli_tools = if gateway_config.cli_tools.is_empty() {
-        None
-    } else {
-        Some(CliToolExecutor::new(gateway_config.cli_tools))
-    };
+    let has_cli_tools = !gateway_config.cli_tools.is_empty();
+    let cli_tools = gateway_config.cli_tools;
     run_run(registry, |servers| async move {
-        let handler = build_handler(servers, cli_tools).await?;
-        let handler = Arc::new(handler);
+        let upstreams = build_upstreams(servers).await?;
         let ct = CancellationToken::new();
         let ct_signal = ct.clone();
         tokio::spawn(async move {
@@ -245,39 +262,52 @@ async fn run_foreground_daemon<S: ConfigStore>(
             sigterm.recv().await;
             ct_signal.cancel();
         });
-        serve_proxy_http(handler, port, ct, log_sender).await
+        if has_cli_tools {
+            let cli_runner = ProcessCliRunner::new(cli_tools);
+            let gateway = Gateway::new(upstreams, cli_runner);
+            let adapter = Arc::new(McpAdapter::new(gateway));
+            serve_proxy_http(adapter, port, ct, log_sender).await
+        } else {
+            let gateway = Gateway::new(upstreams, NullCliRunner);
+            let adapter = Arc::new(McpAdapter::new(gateway));
+            serve_proxy_http(adapter, port, ct, log_sender).await
+        }
     })
     .await
 }
 
 async fn run_attach(
     port_override: Option<u16>,
-) -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+) -> Result<(), mcp_gateway::adapters::driving::daemon::error::DaemonError> {
     let port = match port_override {
         Some(p) => p,
         None => {
             let pid_path = pid::default_pid_path().unwrap_or_default();
             if pid::check_already_running(&pid_path)?.is_none() {
-                return Err(mcp_gateway::daemon::error::DaemonError::NotRunning);
+                return Err(mcp_gateway::adapters::driving::daemon::error::DaemonError::NotRunning);
             }
             let port_path = pid::default_port_path().unwrap_or_default();
             pid::read_port(&port_path)?.ok_or_else(|| {
-                mcp_gateway::daemon::error::DaemonError::AttachFailed {
+                mcp_gateway::adapters::driving::daemon::error::DaemonError::AttachFailed {
                     message: "port file not found".to_string(),
                 }
             })?
         }
     };
-    mcp_gateway::daemon::attach::attach(port, &mut std::io::stdout()).await
+    mcp_gateway::adapters::driving::daemon::attach::attach(port, &mut std::io::stdout()).await
 }
 
 fn start_daemon(
     config_path: &std::path::Path,
     port: u16,
-) -> Result<(), mcp_gateway::daemon::error::DaemonError> {
+) -> Result<(), mcp_gateway::adapters::driving::daemon::error::DaemonError> {
     let pid_path = pid::default_pid_path().unwrap_or_default();
     if let Some(existing_pid) = pid::check_already_running(&pid_path)? {
-        return Err(mcp_gateway::daemon::error::DaemonError::AlreadyRunning { pid: existing_pid });
+        return Err(
+            mcp_gateway::adapters::driving::daemon::error::DaemonError::AlreadyRunning {
+                pid: existing_pid,
+            },
+        );
     }
     check_port_available(port)?;
     let child = spawn_daemon_process(config_path, port)?;
@@ -288,9 +318,12 @@ fn start_daemon(
     Ok(())
 }
 
-fn check_port_available(port: u16) -> Result<(), mcp_gateway::daemon::error::DaemonError> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", port))
-        .map_err(|_| mcp_gateway::daemon::error::DaemonError::PortInUse { port })?;
+fn check_port_available(
+    port: u16,
+) -> Result<(), mcp_gateway::adapters::driving::daemon::error::DaemonError> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|_| {
+        mcp_gateway::adapters::driving::daemon::error::DaemonError::PortInUse { port }
+    })?;
     drop(listener);
     Ok(())
 }
@@ -298,14 +331,16 @@ fn check_port_available(port: u16) -> Result<(), mcp_gateway::daemon::error::Dae
 fn spawn_daemon_process(
     config_path: &std::path::Path,
     port: u16,
-) -> Result<std::process::Child, mcp_gateway::daemon::error::DaemonError> {
+) -> Result<std::process::Child, mcp_gateway::adapters::driving::daemon::error::DaemonError> {
     // Use argv[0] to locate our own executable for re-exec
     let exe = std::env::args_os()
         .next()
         .map(std::path::PathBuf::from)
-        .ok_or_else(|| mcp_gateway::daemon::error::DaemonError::PidWrite {
-            message: "cannot determine executable path: argv[0] is empty".to_string(),
-        })?;
+        .ok_or_else(
+            || mcp_gateway::adapters::driving::daemon::error::DaemonError::PidWrite {
+                message: "cannot determine executable path: argv[0] is empty".to_string(),
+            },
+        )?;
 
     std::process::Command::new(exe)
         .args([
@@ -320,17 +355,19 @@ fn spawn_daemon_process(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| mcp_gateway::daemon::error::DaemonError::PidWrite {
-            message: format!("failed to spawn daemon: {e}"),
-        })
+        .map_err(
+            |e| mcp_gateway::adapters::driving::daemon::error::DaemonError::PidWrite {
+                message: format!("failed to spawn daemon: {e}"),
+            },
+        )
 }
 
 async fn dispatch_oauth<S: ConfigStore>(
     registry: &RegistryService<S>,
-    args: mcp_gateway::cli::command::OAuthArgs,
+    args: mcp_gateway::adapters::driving::cli::command::OAuthArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use mcp_gateway::cli::command::OAuthAction;
-    use mcp_gateway::oauth::FileCredentialStore;
+    use mcp_gateway::adapters::driven::oauth::FileCredentialStore;
+    use mcp_gateway::adapters::driving::cli::command::OAuthAction;
 
     match args.action {
         OAuthAction::Clear(clear_args) => {
@@ -408,7 +445,7 @@ async fn dispatch_oauth<S: ConfigStore>(
                                 std::collections::HashMap<_, _>,
                                 Box<dyn std::error::Error>,
                             >>()?;
-                    match mcp_gateway::oauth::create_oauth_transport(
+                    match mcp_gateway::adapters::driven::oauth::create_oauth_transport(
                         &http_config.url,
                         &oauth_config,
                         &name,
@@ -451,7 +488,8 @@ async fn connect_upstream_inner(
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ProxyError> {
     match entry {
         McpServerEntry::Stdio(config) => {
-            let transport = mcp_gateway::proxy::runner::spawn_transport(&config)?;
+            let transport =
+                mcp_gateway::adapters::driving::proxy::runner::spawn_transport(&config)?;
             ().serve(transport)
                 .await
                 .map_err(|e| ProxyError::UpstreamInit {
@@ -459,18 +497,23 @@ async fn connect_upstream_inner(
                 })
         }
         McpServerEntry::Http(ref config) => {
-            let has_stored_creds = mcp_gateway::oauth::FileCredentialStore::default_path(name)
-                .is_some_and(|p: std::path::PathBuf| p.exists());
+            let has_stored_creds =
+                mcp_gateway::adapters::driven::oauth::FileCredentialStore::default_path(name)
+                    .is_some_and(|p: std::path::PathBuf| p.exists());
             if config.auth.is_some() || has_stored_creds {
                 let transport =
-                    mcp_gateway::proxy::runner::create_oauth_http_transport(config, name).await?;
+                    mcp_gateway::adapters::driving::proxy::runner::create_oauth_http_transport(
+                        config, name,
+                    )
+                    .await?;
                 ().serve(transport)
                     .await
                     .map_err(|e| ProxyError::UpstreamInit {
                         message: format!("{name}: {e}"),
                     })
             } else {
-                let transport = mcp_gateway::proxy::runner::create_http_transport(config)?;
+                let transport =
+                    mcp_gateway::adapters::driving::proxy::runner::create_http_transport(config)?;
                 ().serve(transport)
                     .await
                     .map_err(|e| ProxyError::UpstreamInit {

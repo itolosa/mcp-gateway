@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::filter::ToolFilter;
+use crate::hexagon::ports::ToolFilter;
 
 pub struct AllowlistFilter {
     allowed: HashSet<String>,

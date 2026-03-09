@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::daemon::error::DaemonError;
+use super::error::DaemonError;
 
 pub fn default_pid_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".mcp-gateway.pid"))

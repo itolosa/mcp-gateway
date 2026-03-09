@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::filter::ToolFilter;
+use crate::hexagon::ports::ToolFilter;
 
 pub struct DenylistFilter {
     denied: HashSet<String>,

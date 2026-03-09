@@ -1,4 +1,4 @@
-mod callback;
+pub(crate) mod callback;
 mod credentials;
 mod error;
 mod service;

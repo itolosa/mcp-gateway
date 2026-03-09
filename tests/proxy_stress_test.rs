@@ -3,10 +3,11 @@ mod proxy_stress {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
-    use mcp_gateway::cli_tools::CliToolExecutor;
+    use mcp_gateway::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
+    use mcp_gateway::adapters::driven::{NullCliRunner, ProcessCliRunner, RmcpUpstreamClient};
+    use mcp_gateway::adapters::driving::McpAdapter;
     use mcp_gateway::config::model::CliToolDef;
-    use mcp_gateway::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
-    use mcp_gateway::proxy::handler::{ProxyHandler, UpstreamEntry};
+    use mcp_gateway::hexagon::usecases::{Gateway, UpstreamEntry};
     use rmcp::model::{
         CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -80,6 +81,7 @@ mod proxy_stress {
             _request: Option<PaginatedRequestParams>,
             _context: RequestContext<RoleServer>,
         ) -> Result<ListToolsResult, ErrorData> {
+            tokio::time::sleep(self.delay).await;
             let schema: serde_json::Map<String, serde_json::Value> =
                 serde_json::from_value(serde_json::json!({
                     "type": "object",
@@ -138,6 +140,17 @@ mod proxy_stress {
         tokio::task::JoinHandle<()>,
         tokio::task::JoinHandle<()>,
     ) {
+        setup_proxy_with_timeout(server, None).await
+    }
+
+    async fn setup_proxy_with_timeout<S: ServerHandler + 'static>(
+        server: S,
+        timeout: Option<Duration>,
+    ) -> (
+        RunningService<RoleClient, ()>,
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
+    ) {
         // upstream: mock server <-> proxy's client
         let (upstream_server_transport, upstream_client_transport) = tokio::io::duplex(4096);
 
@@ -152,17 +165,21 @@ mod proxy_stress {
         upstreams.insert(
             "srv".to_string(),
             UpstreamEntry {
-                service: upstream_client,
+                client: RmcpUpstreamClient::new(upstream_client),
                 filter: passthrough_filter(),
             },
         );
-        let proxy = ProxyHandler::new(upstreams, None);
+        let mut gateway = Gateway::new(upstreams, NullCliRunner);
+        if let Some(t) = timeout {
+            gateway = gateway.with_operation_timeout(t);
+        }
+        let adapter = McpAdapter::new(gateway);
 
         // downstream: proxy server <-> test client
         let (proxy_server_transport, proxy_client_transport) = tokio::io::duplex(4096);
 
         let proxy_handle = tokio::spawn(async move {
-            let s = proxy.serve(proxy_server_transport).await.unwrap();
+            let s = adapter.serve(proxy_server_transport).await.unwrap();
             let _ = s.waiting().await;
         });
 
@@ -281,14 +298,17 @@ mod proxy_stress {
     }
 
     #[tokio::test]
-    async fn upstream_crash_then_list_tools_returns_error() {
+    async fn upstream_crash_then_list_tools_returns_empty_gracefully() {
         let (client, upstream_h, _proxy_h) = setup_proxy().await;
 
         upstream_h.abort();
         let _ = upstream_h.await;
 
-        let result = client.list_tools(None).await;
-        assert!(result.is_err());
+        let result = client.list_tools(None).await.unwrap();
+        assert!(
+            result.tools.is_empty(),
+            "crashed upstream should be skipped"
+        );
     }
 
     #[tokio::test]
@@ -325,6 +345,47 @@ mod proxy_stress {
 
         drop(client);
         let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn slow_upstream_list_tools_skipped_on_timeout() {
+        let (client, upstream_h, proxy_h) = setup_proxy_with_timeout(
+            SlowServer {
+                delay: Duration::from_secs(5),
+            },
+            Some(Duration::from_millis(50)),
+        )
+        .await;
+
+        let result = client.list_tools(None).await.unwrap();
+        assert!(
+            result.tools.is_empty(),
+            "timed-out upstream should be skipped"
+        );
+
+        drop(client);
+        let _ = proxy_h.await;
+        upstream_h.abort();
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn slow_upstream_call_tool_returns_timeout_error() {
+        let (client, upstream_h, proxy_h) = setup_proxy_with_timeout(
+            SlowServer {
+                delay: Duration::from_secs(5),
+            },
+            Some(Duration::from_millis(50)),
+        )
+        .await;
+
+        let result = client.call_tool(echo_params("timeout")).await;
+        assert!(result.is_err(), "call_tool should fail on timeout");
+
+        drop(client);
+        let _ = proxy_h.await;
+        upstream_h.abort();
         let _ = upstream_h.await;
     }
 
@@ -395,16 +456,17 @@ mod proxy_stress {
         upstreams.insert(
             "srv".to_string(),
             UpstreamEntry {
-                service: upstream_client,
+                client: RmcpUpstreamClient::new(upstream_client),
                 filter: passthrough_filter(),
             },
         );
-        let proxy = ProxyHandler::new(upstreams, None);
+        let gateway = Gateway::new(upstreams, NullCliRunner);
+        let adapter = McpAdapter::new(gateway);
 
         let (proxy_server_t, mut proxy_client_t) = tokio::io::duplex(4096);
 
         let proxy_handle = tokio::spawn(async move {
-            let _ = proxy.serve(proxy_server_t).await;
+            let _ = adapter.serve(proxy_server_t).await;
         });
 
         // Write garbage bytes
@@ -438,16 +500,17 @@ mod proxy_stress {
         upstreams.insert(
             "srv".to_string(),
             UpstreamEntry {
-                service: upstream_client,
+                client: RmcpUpstreamClient::new(upstream_client),
                 filter: passthrough_filter(),
             },
         );
-        let proxy = ProxyHandler::new(upstreams, None);
+        let gateway = Gateway::new(upstreams, NullCliRunner);
+        let adapter = McpAdapter::new(gateway);
 
         let (proxy_server_t, mut proxy_client_t) = tokio::io::duplex(4096);
 
         let proxy_handle = tokio::spawn(async move {
-            let _ = proxy.serve(proxy_server_t).await;
+            let _ = adapter.serve(proxy_server_t).await;
         });
 
         // Write incomplete JSON-RPC
@@ -467,7 +530,7 @@ mod proxy_stress {
 
     // ── Group 6: CLI Tool Stress ──────────────────────────────────────
 
-    fn make_cli_executor(name: &str, command: &str) -> CliToolExecutor {
+    fn make_cli_runner(name: &str, command: &str) -> ProcessCliRunner {
         let mut tools = BTreeMap::new();
         tools.insert(
             name.to_string(),
@@ -476,11 +539,11 @@ mod proxy_stress {
                 description: Some(format!("Stress test tool: {command}")),
             },
         );
-        CliToolExecutor::new(tools)
+        ProcessCliRunner::new(tools)
     }
 
     async fn setup_proxy_with_cli(
-        cli: CliToolExecutor,
+        cli: ProcessCliRunner,
     ) -> (
         RunningService<RoleClient, ()>,
         tokio::task::JoinHandle<()>,
@@ -499,16 +562,17 @@ mod proxy_stress {
         upstreams.insert(
             "srv".to_string(),
             UpstreamEntry {
-                service: upstream_client,
+                client: RmcpUpstreamClient::new(upstream_client),
                 filter: passthrough_filter(),
             },
         );
-        let proxy = ProxyHandler::new(upstreams, Some(cli));
+        let gateway = Gateway::new(upstreams, cli);
+        let adapter = McpAdapter::new(gateway);
 
         let (proxy_server_t, proxy_client_t) = tokio::io::duplex(4096);
 
         let proxy_handle = tokio::spawn(async move {
-            let s = proxy.serve(proxy_server_t).await.unwrap();
+            let s = adapter.serve(proxy_server_t).await.unwrap();
             let _ = s.waiting().await;
         });
 
@@ -518,7 +582,7 @@ mod proxy_stress {
 
     #[tokio::test]
     async fn concurrent_cli_tool_calls_succeed() {
-        let cli = make_cli_executor("cat-tool", "cat");
+        let cli = make_cli_runner("cat-tool", "cat");
         let (client, upstream_h, proxy_h) = setup_proxy_with_cli(cli).await;
         let client = std::sync::Arc::new(client);
 
@@ -548,7 +612,7 @@ mod proxy_stress {
 
     #[tokio::test]
     async fn concurrent_failing_cli_tool_calls_return_errors() {
-        let cli = make_cli_executor("false-tool", "false");
+        let cli = make_cli_runner("false-tool", "false");
         let (client, upstream_h, proxy_h) = setup_proxy_with_cli(cli).await;
         let client = std::sync::Arc::new(client);
 
@@ -567,6 +631,36 @@ mod proxy_stress {
         while let Some(res) = set.join_next().await {
             res.unwrap();
         }
+
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn cli_proxy_also_routes_upstream_and_error_paths() {
+        let cli = make_cli_runner("cat-tool", "cat");
+        let (client, upstream_h, proxy_h) = setup_proxy_with_cli(cli).await;
+
+        // List tools through the proxy (exercises list_tools with CLI runner)
+        let tools = client.list_tools(None).await.unwrap();
+        assert!(tools.tools.len() >= 2);
+
+        // Call upstream tool through the proxy (exercises non-CLI path)
+        let result = client.call_tool(echo_params("via-upstream")).await.unwrap();
+        assert_eq!(extract_text(&result), "via-upstream");
+
+        // Exercise no-prefix error
+        let result = client
+            .call_tool(CallToolRequestParams::new("no_prefix"))
+            .await;
+        assert!(result.is_err());
+
+        // Exercise unknown-server error
+        let result = client
+            .call_tool(CallToolRequestParams::new("unknown__tool"))
+            .await;
+        assert!(result.is_err());
 
         drop(client);
         let _ = proxy_h.await;

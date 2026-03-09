@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::oauth::error::OAuthError;
+use super::error::OAuthError;
 
 #[derive(Debug)]
 pub struct CallbackParams {

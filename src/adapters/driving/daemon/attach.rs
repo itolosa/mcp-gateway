@@ -1,4 +1,4 @@
-use crate::daemon::error::DaemonError;
+use super::error::DaemonError;
 
 fn attach_err(e: impl std::fmt::Display) -> DaemonError {
     DaemonError::AttachFailed {

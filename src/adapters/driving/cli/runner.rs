@@ -2,15 +2,15 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::Write;
 
-use crate::cli::command::{
+use super::command::{
     AddArgs, AllowlistModifyArgs, AllowlistShowArgs, DenylistModifyArgs, DenylistShowArgs,
     RemoveArgs, TransportType,
 };
+use crate::adapters::driving::proxy::error::ProxyError;
 use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::config::store::ConfigStore;
-use crate::proxy::error::ProxyError;
-use crate::registry::error::RegistryError;
-use crate::registry::service::RegistryService;
+use crate::hexagon::usecases::registry_error::RegistryError;
+use crate::hexagon::usecases::registry_service::RegistryService;
 
 pub fn run_list<S: ConfigStore>(
     service: &RegistryService<S>,
@@ -30,8 +30,8 @@ pub fn run_list<S: ConfigStore>(
 
 fn describe_entry(entry: &McpServerEntry) -> (&str, &str) {
     match entry {
-        McpServerEntry::Stdio(config) => ("stdio", &config.command),
-        McpServerEntry::Http(config) => ("http", &config.url),
+        McpServerEntry::Stdio(c) => ("stdio", &c.command),
+        McpServerEntry::Http(c) => ("http", &c.url),
     }
 }
 
@@ -838,7 +838,9 @@ mod tests {
     }
 
     async fn e2e_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
-        use crate::proxy::handler::{ProxyHandler, UpstreamEntry};
+        use crate::adapters::driven::{NullCliRunner, RmcpUpstreamClient};
+        use crate::adapters::driving::McpAdapter;
+        use crate::hexagon::usecases::{Gateway, UpstreamEntry};
         use rmcp::ServiceExt;
 
         let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);
@@ -855,14 +857,15 @@ mod tests {
         upstreams.insert(
             "test".to_string(),
             UpstreamEntry {
-                service: upstream,
-                filter: crate::filter::CompoundFilter::new(
-                    crate::filter::AllowlistFilter::new(vec![]),
-                    crate::filter::DenylistFilter::new(vec![]),
+                client: RmcpUpstreamClient::new(upstream),
+                filter: crate::adapters::driven::filter::CompoundFilter::new(
+                    crate::adapters::driven::filter::AllowlistFilter::new(vec![]),
+                    crate::adapters::driven::filter::DenylistFilter::new(vec![]),
                 ),
             },
         );
-        let handler = std::sync::Arc::new(ProxyHandler::new(upstreams, None));
+        let gateway = Gateway::new(upstreams, NullCliRunner);
+        let adapter = std::sync::Arc::new(McpAdapter::new(gateway));
 
         tokio::spawn(async move {
             let client = ().serve(downstream_client_t).await.unwrap();
@@ -871,7 +874,9 @@ mod tests {
             drop(client);
         });
 
-        let result = crate::proxy::runner::serve_proxy(handler, downstream_server_t).await;
+        let result =
+            crate::adapters::driving::proxy::runner::serve_proxy(adapter, downstream_server_t)
+                .await;
 
         let _ = upstream_handle.await;
         result

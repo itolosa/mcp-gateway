@@ -1,4 +1,4 @@
-use crate::filter::ToolFilter;
+use crate::hexagon::ports::ToolFilter;
 
 pub struct CompoundFilter<A: ToolFilter, D: ToolFilter> {
     allow: A,
@@ -21,7 +21,7 @@ impl<A: ToolFilter, D: ToolFilter> ToolFilter for CompoundFilter<A, D> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::filter::{AllowlistFilter, DenylistFilter};
+    use crate::adapters::driven::filter::{AllowlistFilter, DenylistFilter};
 
     #[test]
     fn both_empty_allows_all() {
