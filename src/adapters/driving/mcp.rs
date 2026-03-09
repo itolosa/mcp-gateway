@@ -91,3 +91,72 @@ impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static> ServerHandler for 
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_prefix_maps_to_invalid_params() {
+        let err = gateway_error_to_mcp(GatewayError::NoPrefix {
+            tool: "t".to_string(),
+        });
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("prefix"));
+    }
+
+    #[test]
+    fn unknown_server_maps_to_invalid_params() {
+        let err = gateway_error_to_mcp(GatewayError::UnknownServer {
+            server: "s".to_string(),
+            tool: "t".to_string(),
+        });
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("unknown server"));
+    }
+
+    #[test]
+    fn tool_not_allowed_maps_to_invalid_params() {
+        let err = gateway_error_to_mcp(GatewayError::ToolNotAllowed {
+            tool: "t".to_string(),
+        });
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("not allowed"));
+    }
+
+    #[test]
+    fn upstream_error_maps_to_internal_error() {
+        let err = gateway_error_to_mcp(GatewayError::Upstream("fail".to_string()));
+        assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+    }
+
+    #[test]
+    fn upstream_timeout_maps_to_internal_error() {
+        let err = gateway_error_to_mcp(GatewayError::UpstreamTimeout {
+            server: "s".to_string(),
+            timeout_secs: 5,
+        });
+        assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+    }
+
+    #[test]
+    fn cli_tool_error_maps_to_internal_error() {
+        let err = gateway_error_to_mcp(GatewayError::CliTool("fail".to_string()));
+        assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+    }
+
+    #[test]
+    fn domain_content_to_mcp_converts_valid_content() {
+        let content = vec![serde_json::json!({"type": "text", "text": "hello"})];
+        let result = domain_content_to_mcp(content);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn domain_content_to_mcp_skips_invalid_content() {
+        let content = vec![serde_json::json!({"invalid": true})];
+        let result = domain_content_to_mcp(content);
+        assert!(result.is_empty());
+    }
+}
