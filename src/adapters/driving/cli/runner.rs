@@ -8,11 +8,11 @@ use super::command::{
 };
 use crate::adapters::driving::proxy::error::ProxyError;
 use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
-use crate::config::store::ConfigStore;
+use crate::hexagon::ports::ServerConfigStore;
 use crate::hexagon::usecases::registry_error::RegistryError;
 use crate::hexagon::usecases::registry_service::RegistryService;
 
-pub fn run_list<S: ConfigStore>(
+pub fn run_list<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     out: &mut impl Write,
 ) -> Result<(), RegistryError> {
@@ -40,7 +40,7 @@ pub async fn run_run<S, F, Fut>(
     run_proxy: F,
 ) -> Result<(), ProxyError>
 where
-    S: ConfigStore,
+    S: ServerConfigStore<Entry = McpServerEntry>,
     F: FnOnce(BTreeMap<String, McpServerEntry>) -> Fut,
     Fut: Future<Output = Result<(), ProxyError>>,
 {
@@ -48,28 +48,28 @@ where
     run_proxy(servers).await
 }
 
-pub fn run_remove<S: ConfigStore>(
+pub fn run_remove<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: RemoveArgs,
 ) -> Result<(), RegistryError> {
     service.remove_server(&args.name)
 }
 
-pub fn run_allowlist_add<S: ConfigStore>(
+pub fn run_allowlist_add<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: AllowlistModifyArgs,
 ) -> Result<(), RegistryError> {
     service.add_allowed_tools(&args.name, &args.tools)
 }
 
-pub fn run_allowlist_remove<S: ConfigStore>(
+pub fn run_allowlist_remove<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: AllowlistModifyArgs,
 ) -> Result<(), RegistryError> {
     service.remove_allowed_tools(&args.name, &args.tools)
 }
 
-pub fn run_allowlist_show<S: ConfigStore>(
+pub fn run_allowlist_show<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: AllowlistShowArgs,
     out: &mut impl Write,
@@ -81,21 +81,21 @@ pub fn run_allowlist_show<S: ConfigStore>(
     Ok(())
 }
 
-pub fn run_denylist_add<S: ConfigStore>(
+pub fn run_denylist_add<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: DenylistModifyArgs,
 ) -> Result<(), RegistryError> {
     service.add_denied_tools(&args.name, &args.tools)
 }
 
-pub fn run_denylist_remove<S: ConfigStore>(
+pub fn run_denylist_remove<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: DenylistModifyArgs,
 ) -> Result<(), RegistryError> {
     service.remove_denied_tools(&args.name, &args.tools)
 }
 
-pub fn run_denylist_show<S: ConfigStore>(
+pub fn run_denylist_show<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: DenylistShowArgs,
     out: &mut impl Write,
@@ -107,7 +107,7 @@ pub fn run_denylist_show<S: ConfigStore>(
     Ok(())
 }
 
-pub fn run_add<S: ConfigStore>(
+pub fn run_add<S: ServerConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: AddArgs,
 ) -> Result<(), RegistryError> {
@@ -152,49 +152,42 @@ fn build_entry(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::config::error::ConfigError;
     use crate::config::model::GatewayConfig;
-    use std::cell::RefCell;
-    use std::path::PathBuf;
+    use std::sync::Mutex;
 
     struct FakeConfigStore {
-        config: RefCell<GatewayConfig>,
+        entries: Mutex<BTreeMap<String, McpServerEntry>>,
         fail_load: bool,
     }
 
     impl FakeConfigStore {
         fn new(config: GatewayConfig) -> Self {
             Self {
-                config: RefCell::new(config),
+                entries: Mutex::new(config.mcp_servers),
                 fail_load: false,
             }
         }
 
         fn failing() -> Self {
             Self {
-                config: RefCell::new(GatewayConfig::default()),
+                entries: Mutex::new(BTreeMap::new()),
                 fail_load: true,
             }
         }
     }
 
-    fn io_error() -> ConfigError {
-        ConfigError::Io {
-            path: PathBuf::from("/fail"),
-            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
-        }
-    }
+    impl ServerConfigStore for FakeConfigStore {
+        type Entry = McpServerEntry;
 
-    impl ConfigStore for FakeConfigStore {
-        fn load(&self) -> Result<GatewayConfig, ConfigError> {
+        fn load_entries(&self) -> Result<BTreeMap<String, McpServerEntry>, String> {
             if self.fail_load {
-                return Err(io_error());
+                return Err("denied".to_string());
             }
-            Ok(self.config.borrow().clone())
+            Ok(self.entries.lock().unwrap().clone())
         }
 
-        fn save(&self, config: &GatewayConfig) -> Result<(), ConfigError> {
-            *self.config.borrow_mut() = config.clone();
+        fn save_entries(&self, entries: BTreeMap<String, McpServerEntry>) -> Result<(), String> {
+            *self.entries.lock().unwrap() = entries;
             Ok(())
         }
     }
@@ -235,8 +228,8 @@ mod tests {
 
         run_add(&service, args).unwrap();
 
-        let config = service.store().load().unwrap();
-        let entry = config.mcp_servers.get("test").unwrap();
+        let entries = service.store().load_entries().unwrap();
+        let entry = entries.get("test").unwrap();
         assert_eq!(
             entry,
             &McpServerEntry::Stdio(StdioConfig {
@@ -266,8 +259,8 @@ mod tests {
 
         run_add(&service, args).unwrap();
 
-        let config = service.store().load().unwrap();
-        let entry = config.mcp_servers.get("remote").unwrap();
+        let entries = service.store().load_entries().unwrap();
+        let entry = entries.get("remote").unwrap();
         assert_eq!(
             entry,
             &McpServerEntry::Http(HttpConfig {
@@ -434,7 +427,7 @@ mod tests {
         let service = RegistryService::new(FakeConfigStore::failing());
         let mut buf = Vec::new();
         let result = run_list(&service, &mut buf);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
@@ -458,8 +451,8 @@ mod tests {
         };
         run_remove(&service, args).unwrap();
 
-        let config = service.store().load().unwrap();
-        assert!(!config.mcp_servers.contains_key("target"));
+        let entries = service.store().load_entries().unwrap();
+        assert!(!entries.contains_key("target"));
     }
 
     #[test]
@@ -534,8 +527,8 @@ mod tests {
         };
         run_allowlist_add(&service, args).unwrap();
 
-        let config = service.store().load().unwrap();
-        let entry = config.mcp_servers.get("test").unwrap();
+        let entries = service.store().load_entries().unwrap();
+        let entry = entries.get("test").unwrap();
         assert_eq!(entry.allowed_tools(), &["read", "write"]);
     }
 
@@ -574,8 +567,8 @@ mod tests {
         };
         run_allowlist_remove(&service, args).unwrap();
 
-        let config = service.store().load().unwrap();
-        let entry = config.mcp_servers.get("test").unwrap();
+        let entries = service.store().load_entries().unwrap();
+        let entry = entries.get("test").unwrap();
         assert_eq!(entry.allowed_tools(), &["write"]);
     }
 
@@ -652,7 +645,7 @@ mod tests {
             tools: vec!["read".to_string()],
         };
         let result = run_allowlist_add(&service, args);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
@@ -663,7 +656,7 @@ mod tests {
             tools: vec!["read".to_string()],
         };
         let result = run_allowlist_remove(&service, args);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
@@ -674,7 +667,7 @@ mod tests {
         };
         let mut buf = Vec::new();
         let result = run_allowlist_show(&service, args, &mut buf);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
@@ -688,8 +681,8 @@ mod tests {
         };
         run_denylist_add(&service, args).unwrap();
 
-        let config = service.store().load().unwrap();
-        let entry = config.mcp_servers.get("test").unwrap();
+        let entries = service.store().load_entries().unwrap();
+        let entry = entries.get("test").unwrap();
         assert_eq!(entry.denied_tools(), &["delete", "exec"]);
     }
 
@@ -728,8 +721,8 @@ mod tests {
         };
         run_denylist_remove(&service, args).unwrap();
 
-        let config = service.store().load().unwrap();
-        let entry = config.mcp_servers.get("test").unwrap();
+        let entries = service.store().load_entries().unwrap();
+        let entry = entries.get("test").unwrap();
         assert_eq!(entry.denied_tools(), &["exec"]);
     }
 
@@ -806,7 +799,7 @@ mod tests {
             tools: vec!["delete".to_string()],
         };
         let result = run_denylist_add(&service, args);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
@@ -817,7 +810,7 @@ mod tests {
             tools: vec!["delete".to_string()],
         };
         let result = run_denylist_remove(&service, args);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
@@ -828,7 +821,7 @@ mod tests {
         };
         let mut buf = Vec::new();
         let result = run_denylist_show(&service, args, &mut buf);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     async fn failing_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {

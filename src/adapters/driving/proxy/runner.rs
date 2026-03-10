@@ -273,24 +273,22 @@ mod tests {
         }
     }
 
-    fn passthrough_filter() -> crate::adapters::driven::filter::CompoundFilter<
-        crate::adapters::driven::filter::AllowlistFilter,
-        crate::adapters::driven::filter::DenylistFilter,
-    > {
-        crate::adapters::driven::filter::CompoundFilter::new(
-            crate::adapters::driven::filter::AllowlistFilter::new(vec![]),
-            crate::adapters::driven::filter::DenylistFilter::new(vec![]),
-        )
+    use crate::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
+
+    type TestFilter = CompoundFilter<AllowlistFilter, DenylistFilter>;
+
+    fn passthrough_filter() -> TestFilter {
+        CompoundFilter::new(AllowlistFilter::new(vec![]), DenylistFilter::new(vec![]))
     }
 
-    fn empty_adapter() -> Arc<McpAdapter<RmcpUpstreamClient, NullCliRunner>> {
+    fn empty_adapter() -> Arc<McpAdapter<RmcpUpstreamClient, NullCliRunner, TestFilter>> {
         let gateway = Gateway::new(BTreeMap::new(), NullCliRunner);
         Arc::new(McpAdapter::new(gateway))
     }
 
     fn adapter_with_upstreams(
-        upstreams: BTreeMap<String, UpstreamEntry<RmcpUpstreamClient>>,
-    ) -> Arc<McpAdapter<RmcpUpstreamClient, NullCliRunner>> {
+        upstreams: BTreeMap<String, UpstreamEntry<RmcpUpstreamClient, TestFilter>>,
+    ) -> Arc<McpAdapter<RmcpUpstreamClient, NullCliRunner, TestFilter>> {
         let gateway = Gateway::new(upstreams, NullCliRunner);
         Arc::new(McpAdapter::new(gateway))
     }

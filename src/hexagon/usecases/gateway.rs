@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use crate::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
 use crate::hexagon::entities::{GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor};
 use crate::hexagon::ports::ToolFilter;
 use crate::hexagon::ports::{CliToolRunner, UpstreamClient};
@@ -26,19 +25,19 @@ fn upstream_error(e: crate::hexagon::entities::UpstreamError) -> GatewayError {
     GatewayError::Upstream(e.to_string())
 }
 
-pub struct UpstreamEntry<U> {
+pub struct UpstreamEntry<U, F> {
     pub client: U,
-    pub filter: CompoundFilter<AllowlistFilter, DenylistFilter>,
+    pub filter: F,
 }
 
-pub struct Gateway<U, C> {
-    upstreams: BTreeMap<String, UpstreamEntry<U>>,
+pub struct Gateway<U, C, F> {
+    upstreams: BTreeMap<String, UpstreamEntry<U, F>>,
     cli_runner: C,
     operation_timeout: Duration,
 }
 
-impl<U: UpstreamClient, C: CliToolRunner> Gateway<U, C> {
-    pub fn new(upstreams: BTreeMap<String, UpstreamEntry<U>>, cli_runner: C) -> Self {
+impl<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> Gateway<U, C, F> {
+    pub fn new(upstreams: BTreeMap<String, UpstreamEntry<U, F>>, cli_runner: C) -> Self {
         Self {
             upstreams,
             cli_runner,
@@ -127,6 +126,7 @@ impl<U: UpstreamClient, C: CliToolRunner> Gateway<U, C> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
     use crate::hexagon::entities::UpstreamError;
 
     struct MockServerA;
@@ -235,7 +235,9 @@ mod tests {
         CompoundFilter::new(AllowlistFilter::new(vec![]), DenylistFilter::new(vec![]))
     }
 
-    fn two_server_setup() -> BTreeMap<String, UpstreamEntry<DualMockServer>> {
+    type TestFilter = CompoundFilter<AllowlistFilter, DenylistFilter>;
+
+    fn two_server_setup() -> BTreeMap<String, UpstreamEntry<DualMockServer, TestFilter>> {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "alpha".to_string(),
@@ -282,7 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_no_upstreams_returns_empty() {
-        let gateway: Gateway<DualMockServer, NullCliRunner> =
+        let gateway: Gateway<DualMockServer, NullCliRunner, TestFilter> =
             Gateway::new(BTreeMap::new(), NullCliRunner);
         let result = gateway.list_tools().await.unwrap();
         assert!(result.is_empty());
@@ -530,7 +532,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_tools_only_no_upstreams() {
-        let gateway: Gateway<DualMockServer, MockCliRunner> =
+        let gateway: Gateway<DualMockServer, MockCliRunner, TestFilter> =
             Gateway::new(BTreeMap::new(), MockCliRunner);
         let result = gateway.list_tools().await.unwrap();
         assert_eq!(result.len(), 1);
@@ -837,7 +839,7 @@ mod tests {
 
     #[tokio::test]
     async fn call_unknown_cli_tool_returns_error() {
-        let gateway: Gateway<DualMockServer, MockCliRunner> =
+        let gateway: Gateway<DualMockServer, MockCliRunner, TestFilter> =
             Gateway::new(BTreeMap::new(), MockCliRunner);
         let request = ToolCallRequest {
             name: "nonexistent-cli".to_string(),

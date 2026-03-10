@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::future::Future;
 
 use crate::hexagon::entities::{
@@ -27,4 +28,19 @@ pub trait CliToolRunner: Send + Sync {
         &self,
         request: &ToolCallRequest,
     ) -> impl Future<Output = Result<ToolCallResult, GatewayError>> + Send;
+}
+
+/// Driven port: a server entry with tool filter lists.
+pub trait ServerEntry: Send + Sync {
+    fn allowed_tools(&self) -> &[String];
+    fn allowed_tools_mut(&mut self) -> &mut Vec<String>;
+    fn denied_tools(&self) -> &[String];
+    fn denied_tools_mut(&mut self) -> &mut Vec<String>;
+}
+
+/// Driven port: persistent storage for server entries.
+pub trait ServerConfigStore: Send + Sync {
+    type Entry: ServerEntry;
+    fn load_entries(&self) -> Result<BTreeMap<String, Self::Entry>, String>;
+    fn save_entries(&self, entries: BTreeMap<String, Self::Entry>) -> Result<(), String>;
 }

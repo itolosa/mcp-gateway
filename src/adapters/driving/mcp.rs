@@ -6,15 +6,15 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler};
 
 use crate::hexagon::entities::{GatewayError, ToolCallRequest};
-use crate::hexagon::ports::{CliToolRunner, UpstreamClient};
+use crate::hexagon::ports::{CliToolRunner, ToolFilter, UpstreamClient};
 use crate::hexagon::usecases::Gateway;
 
-pub struct McpAdapter<U: UpstreamClient, C: CliToolRunner> {
-    gateway: Gateway<U, C>,
+pub struct McpAdapter<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> {
+    gateway: Gateway<U, C, F>,
 }
 
-impl<U: UpstreamClient, C: CliToolRunner> McpAdapter<U, C> {
-    pub fn new(gateway: Gateway<U, C>) -> Self {
+impl<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> McpAdapter<U, C, F> {
+    pub fn new(gateway: Gateway<U, C, F>) -> Self {
         Self { gateway }
     }
 }
@@ -35,7 +35,9 @@ fn domain_content_to_mcp(content: Vec<serde_json::Value>) -> Vec<Content> {
         .collect()
 }
 
-impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static> ServerHandler for McpAdapter<U, C> {
+impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static, F: ToolFilter + 'static> ServerHandler
+    for McpAdapter<U, C, F>
+{
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()

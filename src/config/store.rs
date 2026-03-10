@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::error::ConfigError;
-use crate::config::model::GatewayConfig;
+use crate::config::model::{GatewayConfig, McpServerEntry};
+use crate::hexagon::ports::ServerConfigStore;
 
 pub trait ConfigStore {
     fn load(&self) -> Result<GatewayConfig, ConfigError>;
@@ -61,6 +63,21 @@ impl ConfigStore for FileConfigStore {
             path: self.path.clone(),
             source: e,
         })
+    }
+}
+
+impl ServerConfigStore for FileConfigStore {
+    type Entry = McpServerEntry;
+
+    fn load_entries(&self) -> Result<BTreeMap<String, McpServerEntry>, String> {
+        let config = ConfigStore::load(self).map_err(|e| e.to_string())?;
+        Ok(config.mcp_servers)
+    }
+
+    fn save_entries(&self, entries: BTreeMap<String, McpServerEntry>) -> Result<(), String> {
+        let mut config = ConfigStore::load(self).map_err(|e| e.to_string())?;
+        config.mcp_servers = entries;
+        ConfigStore::save(self, &config).map_err(|e| e.to_string())
     }
 }
 
@@ -162,6 +179,71 @@ mod tests {
     #[test]
     fn ensure_parent_exists_with_empty_path() {
         assert!(ensure_parent_exists(Path::new("")).is_ok());
+    }
+
+    #[test]
+    fn load_entries_returns_server_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"test":{"type":"stdio","command":"echo"}}}"#,
+        )
+        .unwrap();
+
+        let store = FileConfigStore::new(&path);
+        let entries = ServerConfigStore::load_entries(&store).unwrap();
+        assert!(entries.contains_key("test"));
+    }
+
+    #[test]
+    fn save_entries_persists_and_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let store = FileConfigStore::new(&path);
+
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "s1".to_string(),
+            crate::config::model::McpServerEntry::Stdio(crate::config::model::StdioConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_tools: vec![],
+                denied_tools: vec![],
+            }),
+        );
+        ServerConfigStore::save_entries(&store, entries).unwrap();
+
+        let loaded = ServerConfigStore::load_entries(&store).unwrap();
+        assert!(loaded.contains_key("s1"));
+    }
+
+    #[test]
+    fn load_entries_missing_file_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileConfigStore::new(&dir.path().join("nonexistent.json"));
+
+        let entries = ServerConfigStore::load_entries(&store).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn load_entries_malformed_file_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "not json").unwrap();
+
+        let store = FileConfigStore::new(&path);
+        let result = ServerConfigStore::load_entries(&store);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn save_entries_to_invalid_path_returns_error() {
+        let store = FileConfigStore::new(Path::new("/dev/null/impossible/config.json"));
+        let result = ServerConfigStore::save_entries(&store, BTreeMap::new());
+        assert!(result.is_err());
     }
 
     #[test]

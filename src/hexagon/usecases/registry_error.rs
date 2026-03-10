@@ -1,5 +1,3 @@
-use crate::config::error::ConfigError;
-
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
     #[error("server '{name}' already exists")]
@@ -8,8 +6,8 @@ pub enum RegistryError {
     #[error("server '{name}' not found")]
     NotFound { name: String },
 
-    #[error(transparent)]
-    Config(#[from] ConfigError),
+    #[error("storage error: {0}")]
+    Storage(String),
 }
 
 #[cfg(test)]
@@ -35,13 +33,9 @@ mod tests {
     }
 
     #[test]
-    fn config_error_converts() {
-        let config_err = ConfigError::Io {
-            path: std::path::PathBuf::from("/tmp/test"),
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
-        };
-        let registry_err = RegistryError::from(config_err);
-        assert!(matches!(registry_err, RegistryError::Config(_)));
-        assert!(registry_err.to_string().contains("/tmp/test"));
+    fn storage_error_display() {
+        let err = RegistryError::Storage("disk full".to_string());
+        assert!(err.to_string().contains("disk full"));
+        assert!(err.to_string().contains("storage error"));
     }
 }

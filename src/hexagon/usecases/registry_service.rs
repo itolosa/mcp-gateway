@@ -1,14 +1,13 @@
 use std::collections::BTreeMap;
 
 use super::registry_error::RegistryError;
-use crate::config::model::McpServerEntry;
-use crate::config::store::ConfigStore;
+use crate::hexagon::ports::{ServerConfigStore, ServerEntry};
 
-pub struct RegistryService<S: ConfigStore> {
+pub struct RegistryService<S: ServerConfigStore> {
     store: S,
 }
 
-impl<S: ConfigStore> RegistryService<S> {
+impl<S: ServerConfigStore> RegistryService<S> {
     pub fn new(store: S) -> Self {
         Self { store }
     }
@@ -17,51 +16,48 @@ impl<S: ConfigStore> RegistryService<S> {
         &self.store
     }
 
-    pub fn list_servers(&self) -> Result<BTreeMap<String, McpServerEntry>, RegistryError> {
-        let config = self.store.load()?;
-        Ok(config.mcp_servers)
+    pub fn list_servers(&self) -> Result<BTreeMap<String, S::Entry>, RegistryError> {
+        self.store.load_entries().map_err(RegistryError::Storage)
     }
 
-    pub fn add_server(&self, name: String, entry: McpServerEntry) -> Result<(), RegistryError> {
-        let mut config = self.store.load()?;
+    pub fn add_server(&self, name: String, entry: S::Entry) -> Result<(), RegistryError> {
+        let mut entries = self.store.load_entries().map_err(RegistryError::Storage)?;
 
-        if config.mcp_servers.contains_key(&name) {
+        if entries.contains_key(&name) {
             return Err(RegistryError::AlreadyExists { name });
         }
 
-        config.mcp_servers.insert(name, entry);
-        self.store.save(&config)?;
-        Ok(())
+        entries.insert(name, entry);
+        self.store
+            .save_entries(entries)
+            .map_err(RegistryError::Storage)
     }
 
     pub fn remove_server(&self, name: &str) -> Result<(), RegistryError> {
-        let mut config = self.store.load()?;
+        let mut entries = self.store.load_entries().map_err(RegistryError::Storage)?;
 
-        if config.mcp_servers.remove(name).is_none() {
+        if entries.remove(name).is_none() {
             return Err(RegistryError::NotFound {
                 name: name.to_string(),
             });
         }
 
-        self.store.save(&config)?;
-        Ok(())
+        self.store
+            .save_entries(entries)
+            .map_err(RegistryError::Storage)
     }
 
     pub fn get_allowed_tools(&self, name: &str) -> Result<Vec<String>, RegistryError> {
-        let config = self.store.load()?;
-        let entry = config
-            .mcp_servers
-            .get(name)
-            .ok_or_else(|| RegistryError::NotFound {
-                name: name.to_string(),
-            })?;
+        let entries = self.store.load_entries().map_err(RegistryError::Storage)?;
+        let entry = entries.get(name).ok_or_else(|| RegistryError::NotFound {
+            name: name.to_string(),
+        })?;
         Ok(entry.allowed_tools().to_vec())
     }
 
     pub fn add_allowed_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
-        let mut config = self.store.load()?;
-        let entry = config
-            .mcp_servers
+        let mut entries = self.store.load_entries().map_err(RegistryError::Storage)?;
+        let entry = entries
             .get_mut(name)
             .ok_or_else(|| RegistryError::NotFound {
                 name: name.to_string(),
@@ -72,38 +68,35 @@ impl<S: ConfigStore> RegistryService<S> {
                 allowed.push(tool.clone());
             }
         }
-        self.store.save(&config)?;
-        Ok(())
+        self.store
+            .save_entries(entries)
+            .map_err(RegistryError::Storage)
     }
 
     pub fn remove_allowed_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
-        let mut config = self.store.load()?;
-        let entry = config
-            .mcp_servers
+        let mut entries = self.store.load_entries().map_err(RegistryError::Storage)?;
+        let entry = entries
             .get_mut(name)
             .ok_or_else(|| RegistryError::NotFound {
                 name: name.to_string(),
             })?;
         entry.allowed_tools_mut().retain(|t| !tools.contains(t));
-        self.store.save(&config)?;
-        Ok(())
+        self.store
+            .save_entries(entries)
+            .map_err(RegistryError::Storage)
     }
 
     pub fn get_denied_tools(&self, name: &str) -> Result<Vec<String>, RegistryError> {
-        let config = self.store.load()?;
-        let entry = config
-            .mcp_servers
-            .get(name)
-            .ok_or_else(|| RegistryError::NotFound {
-                name: name.to_string(),
-            })?;
+        let entries = self.store.load_entries().map_err(RegistryError::Storage)?;
+        let entry = entries.get(name).ok_or_else(|| RegistryError::NotFound {
+            name: name.to_string(),
+        })?;
         Ok(entry.denied_tools().to_vec())
     }
 
     pub fn add_denied_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
-        let mut config = self.store.load()?;
-        let entry = config
-            .mcp_servers
+        let mut entries = self.store.load_entries().map_err(RegistryError::Storage)?;
+        let entry = entries
             .get_mut(name)
             .ok_or_else(|| RegistryError::NotFound {
                 name: name.to_string(),
@@ -114,21 +107,22 @@ impl<S: ConfigStore> RegistryService<S> {
                 denied.push(tool.clone());
             }
         }
-        self.store.save(&config)?;
-        Ok(())
+        self.store
+            .save_entries(entries)
+            .map_err(RegistryError::Storage)
     }
 
     pub fn remove_denied_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
-        let mut config = self.store.load()?;
-        let entry = config
-            .mcp_servers
+        let mut entries = self.store.load_entries().map_err(RegistryError::Storage)?;
+        let entry = entries
             .get_mut(name)
             .ok_or_else(|| RegistryError::NotFound {
                 name: name.to_string(),
             })?;
         entry.denied_tools_mut().retain(|t| !tools.contains(t));
-        self.store.save(&config)?;
-        Ok(())
+        self.store
+            .save_entries(entries)
+            .map_err(RegistryError::Storage)
     }
 }
 
@@ -136,57 +130,53 @@ impl<S: ConfigStore> RegistryService<S> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::config::error::ConfigError;
-    use crate::config::model::{GatewayConfig, HttpConfig, StdioConfig};
-    use std::cell::RefCell;
+    use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
     use std::collections::BTreeMap;
+    use std::sync::Mutex;
 
     struct FakeConfigStore {
-        config: RefCell<GatewayConfig>,
+        entries: Mutex<BTreeMap<String, McpServerEntry>>,
     }
 
     impl FakeConfigStore {
-        fn new(config: GatewayConfig) -> Self {
+        fn new(entries: BTreeMap<String, McpServerEntry>) -> Self {
             Self {
-                config: RefCell::new(config),
+                entries: Mutex::new(entries),
             }
         }
     }
 
-    impl ConfigStore for FakeConfigStore {
-        fn load(&self) -> Result<GatewayConfig, ConfigError> {
-            Ok(self.config.borrow().clone())
+    impl ServerConfigStore for FakeConfigStore {
+        type Entry = McpServerEntry;
+
+        fn load_entries(&self) -> Result<BTreeMap<String, McpServerEntry>, String> {
+            Ok(self.entries.lock().unwrap().clone())
         }
 
-        fn save(&self, config: &GatewayConfig) -> Result<(), ConfigError> {
-            *self.config.borrow_mut() = config.clone();
+        fn save_entries(&self, entries: BTreeMap<String, McpServerEntry>) -> Result<(), String> {
+            *self.entries.lock().unwrap() = entries;
             Ok(())
-        }
-    }
-
-    fn io_error() -> ConfigError {
-        ConfigError::Io {
-            path: std::path::PathBuf::from("/fail"),
-            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
         }
     }
 
     struct FailingStore {
         fail_load: bool,
-        config: GatewayConfig,
+        entries: BTreeMap<String, McpServerEntry>,
     }
 
-    impl ConfigStore for FailingStore {
-        fn load(&self) -> Result<GatewayConfig, ConfigError> {
+    impl ServerConfigStore for FailingStore {
+        type Entry = McpServerEntry;
+
+        fn load_entries(&self) -> Result<BTreeMap<String, McpServerEntry>, String> {
             if self.fail_load {
-                Err(io_error())
+                Err("denied".to_string())
             } else {
-                Ok(self.config.clone())
+                Ok(self.entries.clone())
             }
         }
 
-        fn save(&self, _config: &GatewayConfig) -> Result<(), ConfigError> {
-            Err(io_error())
+        fn save_entries(&self, _entries: BTreeMap<String, McpServerEntry>) -> Result<(), String> {
+            Err("denied".to_string())
         }
     }
 
@@ -212,7 +202,7 @@ mod tests {
 
     #[test]
     fn list_empty_config_returns_empty() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.list_servers().unwrap();
@@ -221,10 +211,10 @@ mod tests {
 
     #[test]
     fn list_populated_config_returns_all_servers() {
-        let mut initial = GatewayConfig::default();
-        initial.mcp_servers.insert("s1".to_string(), stdio_entry());
-        initial.mcp_servers.insert("h1".to_string(), http_entry());
-        let store = FakeConfigStore::new(initial);
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
+        entries.insert("h1".to_string(), http_entry());
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         let result = service.list_servers().unwrap();
@@ -237,16 +227,16 @@ mod tests {
     fn list_with_store_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.list_servers();
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn add_to_empty_config_succeeds() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.add_server("test".to_string(), stdio_entry());
@@ -255,24 +245,22 @@ mod tests {
 
     #[test]
     fn add_persists_to_store() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         service
             .add_server("my-server".to_string(), http_entry())
             .unwrap();
 
-        let config = service.store.load().unwrap();
-        assert!(config.mcp_servers.contains_key("my-server"));
+        let entries = service.store.load_entries().unwrap();
+        assert!(entries.contains_key("my-server"));
     }
 
     #[test]
     fn add_duplicate_name_returns_already_exists() {
-        let mut initial = GatewayConfig::default();
-        initial
-            .mcp_servers
-            .insert("existing".to_string(), stdio_entry());
-        let store = FakeConfigStore::new(initial);
+        let mut entries = BTreeMap::new();
+        entries.insert("existing".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         let result = service.add_server("existing".to_string(), http_entry());
@@ -286,40 +274,40 @@ mod tests {
     fn add_with_store_load_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.add_server("test".to_string(), stdio_entry());
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn add_with_store_save_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: false,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.add_server("test".to_string(), stdio_entry());
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn remove_existing_server_succeeds() {
-        let mut initial = GatewayConfig::default();
-        initial.mcp_servers.insert("s1".to_string(), stdio_entry());
-        let store = FakeConfigStore::new(initial);
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service.remove_server("s1").unwrap();
 
-        let config = service.store().load().unwrap();
-        assert!(!config.mcp_servers.contains_key("s1"));
+        let entries = service.store().load_entries().unwrap();
+        assert!(!entries.contains_key("s1"));
     }
 
     #[test]
     fn remove_nonexistent_server_returns_not_found() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.remove_server("nope");
@@ -333,30 +321,30 @@ mod tests {
     fn remove_with_store_load_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.remove_server("test");
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn remove_with_store_save_error_propagates() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("test".to_string(), stdio_entry());
+        let mut entries = BTreeMap::new();
+        entries.insert("test".to_string(), stdio_entry());
         let service = RegistryService::new(FailingStore {
             fail_load: false,
-            config,
+            entries,
         });
 
         let result = service.remove_server("test");
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn get_allowed_tools_returns_list() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
+        let mut entries = BTreeMap::new();
+        entries.insert(
             "s1".to_string(),
             McpServerEntry::Stdio(StdioConfig {
                 command: "echo".to_string(),
@@ -366,7 +354,7 @@ mod tests {
                 denied_tools: vec![],
             }),
         );
-        let store = FakeConfigStore::new(config);
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         let tools = service.get_allowed_tools("s1").unwrap();
@@ -375,9 +363,9 @@ mod tests {
 
     #[test]
     fn get_allowed_tools_empty_returns_empty() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("s1".to_string(), stdio_entry());
-        let store = FakeConfigStore::new(config);
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         let tools = service.get_allowed_tools("s1").unwrap();
@@ -386,7 +374,7 @@ mod tests {
 
     #[test]
     fn get_allowed_tools_not_found() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.get_allowed_tools("nope");
@@ -400,18 +388,18 @@ mod tests {
     fn get_allowed_tools_store_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.get_allowed_tools("s1");
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn add_allowed_tools_appends_new_tools() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("s1".to_string(), stdio_entry());
-        let store = FakeConfigStore::new(config);
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service
@@ -424,8 +412,8 @@ mod tests {
 
     #[test]
     fn add_allowed_tools_skips_duplicates() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
+        let mut entries = BTreeMap::new();
+        entries.insert(
             "s1".to_string(),
             McpServerEntry::Stdio(StdioConfig {
                 command: "echo".to_string(),
@@ -435,7 +423,7 @@ mod tests {
                 denied_tools: vec![],
             }),
         );
-        let store = FakeConfigStore::new(config);
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service
@@ -448,7 +436,7 @@ mod tests {
 
     #[test]
     fn add_allowed_tools_not_found() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.add_allowed_tools("nope", &["read".to_string()]);
@@ -462,30 +450,30 @@ mod tests {
     fn add_allowed_tools_store_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.add_allowed_tools("s1", &["read".to_string()]);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn add_allowed_tools_save_error_propagates() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
         let service = RegistryService::new(FailingStore {
             fail_load: false,
-            config,
+            entries,
         });
 
         let result = service.add_allowed_tools("s1", &["read".to_string()]);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn remove_allowed_tools_removes_specified() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
+        let mut entries = BTreeMap::new();
+        entries.insert(
             "s1".to_string(),
             McpServerEntry::Stdio(StdioConfig {
                 command: "echo".to_string(),
@@ -499,7 +487,7 @@ mod tests {
                 denied_tools: vec![],
             }),
         );
-        let store = FakeConfigStore::new(config);
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service
@@ -512,8 +500,8 @@ mod tests {
 
     #[test]
     fn remove_allowed_tools_ignores_missing() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
+        let mut entries = BTreeMap::new();
+        entries.insert(
             "s1".to_string(),
             McpServerEntry::Stdio(StdioConfig {
                 command: "echo".to_string(),
@@ -523,7 +511,7 @@ mod tests {
                 denied_tools: vec![],
             }),
         );
-        let store = FakeConfigStore::new(config);
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service
@@ -536,7 +524,7 @@ mod tests {
 
     #[test]
     fn remove_allowed_tools_not_found() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.remove_allowed_tools("nope", &["read".to_string()]);
@@ -550,30 +538,30 @@ mod tests {
     fn remove_allowed_tools_store_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.remove_allowed_tools("s1", &["read".to_string()]);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn remove_allowed_tools_save_error_propagates() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
         let service = RegistryService::new(FailingStore {
             fail_load: false,
-            config,
+            entries,
         });
 
         let result = service.remove_allowed_tools("s1", &["read".to_string()]);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn get_denied_tools_returns_list() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
+        let mut entries = BTreeMap::new();
+        entries.insert(
             "s1".to_string(),
             McpServerEntry::Stdio(StdioConfig {
                 command: "echo".to_string(),
@@ -583,7 +571,7 @@ mod tests {
                 denied_tools: vec!["delete".to_string(), "exec".to_string()],
             }),
         );
-        let store = FakeConfigStore::new(config);
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         let tools = service.get_denied_tools("s1").unwrap();
@@ -592,9 +580,9 @@ mod tests {
 
     #[test]
     fn get_denied_tools_empty_returns_empty() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("s1".to_string(), stdio_entry());
-        let store = FakeConfigStore::new(config);
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         let tools = service.get_denied_tools("s1").unwrap();
@@ -603,7 +591,7 @@ mod tests {
 
     #[test]
     fn get_denied_tools_not_found() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.get_denied_tools("nope");
@@ -617,18 +605,18 @@ mod tests {
     fn get_denied_tools_store_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.get_denied_tools("s1");
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn add_denied_tools_appends_new_tools() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("s1".to_string(), stdio_entry());
-        let store = FakeConfigStore::new(config);
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service
@@ -641,8 +629,8 @@ mod tests {
 
     #[test]
     fn add_denied_tools_skips_duplicates() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
+        let mut entries = BTreeMap::new();
+        entries.insert(
             "s1".to_string(),
             McpServerEntry::Stdio(StdioConfig {
                 command: "echo".to_string(),
@@ -652,7 +640,7 @@ mod tests {
                 denied_tools: vec!["delete".to_string()],
             }),
         );
-        let store = FakeConfigStore::new(config);
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service
@@ -665,7 +653,7 @@ mod tests {
 
     #[test]
     fn add_denied_tools_not_found() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.add_denied_tools("nope", &["delete".to_string()]);
@@ -679,30 +667,30 @@ mod tests {
     fn add_denied_tools_store_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.add_denied_tools("s1", &["delete".to_string()]);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn add_denied_tools_save_error_propagates() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
         let service = RegistryService::new(FailingStore {
             fail_load: false,
-            config,
+            entries,
         });
 
         let result = service.add_denied_tools("s1", &["delete".to_string()]);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn remove_denied_tools_removes_specified() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
+        let mut entries = BTreeMap::new();
+        entries.insert(
             "s1".to_string(),
             McpServerEntry::Stdio(StdioConfig {
                 command: "echo".to_string(),
@@ -716,7 +704,7 @@ mod tests {
                 ],
             }),
         );
-        let store = FakeConfigStore::new(config);
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service
@@ -729,8 +717,8 @@ mod tests {
 
     #[test]
     fn remove_denied_tools_ignores_missing() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert(
+        let mut entries = BTreeMap::new();
+        entries.insert(
             "s1".to_string(),
             McpServerEntry::Stdio(StdioConfig {
                 command: "echo".to_string(),
@@ -740,7 +728,7 @@ mod tests {
                 denied_tools: vec!["delete".to_string()],
             }),
         );
-        let store = FakeConfigStore::new(config);
+        let store = FakeConfigStore::new(entries);
         let service = RegistryService::new(store);
 
         service
@@ -753,7 +741,7 @@ mod tests {
 
     #[test]
     fn remove_denied_tools_not_found() {
-        let store = FakeConfigStore::new(GatewayConfig::default());
+        let store = FakeConfigStore::new(BTreeMap::new());
         let service = RegistryService::new(store);
 
         let result = service.remove_denied_tools("nope", &["delete".to_string()]);
@@ -767,23 +755,23 @@ mod tests {
     fn remove_denied_tools_store_error_propagates() {
         let service = RegistryService::new(FailingStore {
             fail_load: true,
-            config: GatewayConfig::default(),
+            entries: BTreeMap::new(),
         });
 
         let result = service.remove_denied_tools("s1", &["delete".to_string()]);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
     #[test]
     fn remove_denied_tools_save_error_propagates() {
-        let mut config = GatewayConfig::default();
-        config.mcp_servers.insert("s1".to_string(), stdio_entry());
+        let mut entries = BTreeMap::new();
+        entries.insert("s1".to_string(), stdio_entry());
         let service = RegistryService::new(FailingStore {
             fail_load: false,
-            config,
+            entries,
         });
 
         let result = service.remove_denied_tools("s1", &["delete".to_string()]);
-        assert!(matches!(result, Err(RegistryError::Config(_))));
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 }

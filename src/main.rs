@@ -8,7 +8,9 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
-use mcp_gateway::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
+use mcp_gateway::adapters::driven::filter::{
+    AllowlistFilter, CompoundFilter, DefaultFilter, DenylistFilter,
+};
 use mcp_gateway::adapters::driven::{NullCliRunner, ProcessCliRunner, RmcpUpstreamClient};
 use mcp_gateway::adapters::driving::cli::command::{
     AllowlistAction, Cli, Command, DenylistAction, DownstreamTransport,
@@ -25,6 +27,7 @@ use mcp_gateway::adapters::driving::McpAdapter;
 use mcp_gateway::config::default_config_path;
 use mcp_gateway::config::model::McpServerEntry;
 use mcp_gateway::config::store::{ConfigStore, FileConfigStore};
+use mcp_gateway::hexagon::ports::ServerConfigStore;
 use mcp_gateway::hexagon::usecases::registry_service::RegistryService;
 use mcp_gateway::hexagon::usecases::{Gateway, UpstreamEntry};
 
@@ -55,7 +58,7 @@ async fn main() {
     }
 }
 
-async fn dispatch_command<S: ConfigStore>(
+async fn dispatch_command<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
     command: Option<Command>,
     registry: &RegistryService<S>,
     config_path: &std::path::Path,
@@ -96,7 +99,7 @@ async fn dispatch_command<S: ConfigStore>(
     }
 }
 
-fn dispatch_allowlist<S: ConfigStore>(
+fn dispatch_allowlist<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     action: AllowlistAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -109,7 +112,7 @@ fn dispatch_allowlist<S: ConfigStore>(
     }
 }
 
-fn dispatch_denylist<S: ConfigStore>(
+fn dispatch_denylist<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     action: DenylistAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -122,7 +125,7 @@ fn dispatch_denylist<S: ConfigStore>(
     }
 }
 
-async fn dispatch_start<S: ConfigStore>(
+async fn dispatch_start<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     config_path: &std::path::Path,
     args: mcp_gateway::adapters::driving::cli::command::StartArgs,
@@ -173,7 +176,7 @@ fn print_error_and_exit(message: &str) {
     std::process::exit(1);
 }
 
-async fn run_gateway<S: ConfigStore>(
+async fn run_gateway<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     transport: DownstreamTransport,
     port: u16,
@@ -216,7 +219,7 @@ async fn run_gateway<S: ConfigStore>(
 
 async fn build_upstreams(
     servers: BTreeMap<String, McpServerEntry>,
-) -> Result<BTreeMap<String, UpstreamEntry<RmcpUpstreamClient>>, ProxyError> {
+) -> Result<BTreeMap<String, UpstreamEntry<RmcpUpstreamClient, DefaultFilter>>, ProxyError> {
     let mut upstreams = BTreeMap::new();
     for (name, entry) in servers {
         let filter = CompoundFilter::new(
@@ -241,7 +244,7 @@ async fn build_upstreams(
     Ok(upstreams)
 }
 
-async fn run_foreground_daemon<S: ConfigStore>(
+async fn run_foreground_daemon<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     port: u16,
     log_sender: broadcast::Sender<String>,
@@ -362,7 +365,7 @@ fn spawn_daemon_process(
         )
 }
 
-async fn dispatch_oauth<S: ConfigStore>(
+async fn dispatch_oauth<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     args: mcp_gateway::adapters::driving::cli::command::OAuthArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {

@@ -123,6 +123,24 @@ fn default_redirect_port() -> u16 {
     9876
 }
 
+impl crate::hexagon::ports::ServerEntry for McpServerEntry {
+    fn allowed_tools(&self) -> &[String] {
+        McpServerEntry::allowed_tools(self)
+    }
+
+    fn allowed_tools_mut(&mut self) -> &mut Vec<String> {
+        McpServerEntry::allowed_tools_mut(self)
+    }
+
+    fn denied_tools(&self) -> &[String] {
+        McpServerEntry::denied_tools(self)
+    }
+
+    fn denied_tools_mut(&mut self) -> &mut Vec<String> {
+        McpServerEntry::denied_tools_mut(self)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

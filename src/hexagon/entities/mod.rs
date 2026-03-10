@@ -1,5 +1,3 @@
-use serde::Serialize;
-
 /// A tool descriptor exposed by the gateway.
 #[derive(Debug, Clone)]
 pub struct ToolDescriptor {
@@ -9,7 +7,7 @@ pub struct ToolDescriptor {
 }
 
 /// A request to call a tool.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ToolCallRequest {
     pub name: String,
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
