@@ -1,8 +1,9 @@
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::{RoleClient, RunningService};
 
-use crate::hexagon::entities::{ToolCallRequest, ToolCallResult, ToolDescriptor, UpstreamError};
-use crate::hexagon::ports::UpstreamClient;
+use crate::hexagon::ports::{
+    ToolCallRequest, ToolCallResult, ToolDescriptor, UpstreamClient, UpstreamError,
+};
 
 pub struct RmcpUpstreamClient {
     service: RunningService<RoleClient, ()>,

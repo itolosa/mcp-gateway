@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 
-use crate::hexagon::entities::{
+pub use crate::hexagon::entities::{
     GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor, UpstreamError,
 };
 

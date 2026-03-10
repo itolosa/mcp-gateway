@@ -1,5 +1,6 @@
-use crate::hexagon::entities::{GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor};
-use crate::hexagon::ports::CliToolRunner;
+use crate::hexagon::ports::{
+    CliToolRunner, GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor,
+};
 
 /// No-op CLI runner for when no CLI tools are configured.
 pub struct NullCliRunner;

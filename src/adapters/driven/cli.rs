@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use tokio::io::AsyncWriteExt;
 
 use crate::config::model::CliToolDef;
-use crate::hexagon::entities::{GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor};
-use crate::hexagon::ports::CliToolRunner;
+use crate::hexagon::ports::{
+    CliToolRunner, GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor,
+};
 
 pub struct ProcessCliRunner {
     tools: BTreeMap<String, CliToolDef>,

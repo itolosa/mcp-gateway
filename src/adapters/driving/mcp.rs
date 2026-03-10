@@ -5,8 +5,9 @@ use rmcp::model::{
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler};
 
-use crate::hexagon::entities::{GatewayError, ToolCallRequest};
-use crate::hexagon::ports::{CliToolRunner, ToolFilter, UpstreamClient};
+use crate::hexagon::ports::{
+    CliToolRunner, GatewayError, ToolCallRequest, ToolFilter, UpstreamClient,
+};
 use crate::hexagon::usecases::Gateway;
 
 pub struct McpAdapter<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> {
