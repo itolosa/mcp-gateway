@@ -19,6 +19,9 @@ use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, Rmcp
 use mcp_gateway::adapters::driven::storage::{ConfigStore, FileConfigStore};
 use mcp_gateway::adapters::driving::execution::process::log_broadcast::BroadcastLayer;
 use mcp_gateway::adapters::driving::execution::process::pid;
+use mcp_gateway::adapters::driving::execution::process::status_socket::{
+    self, GatewayStatusReport, ProviderStatus,
+};
 use mcp_gateway::adapters::driving::ui::command::{
     AllowlistAction, Cli, Command, DenylistAction, DownstreamTransport,
 };
@@ -91,7 +94,7 @@ async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + Confi
             .await
             .map_err(|e| e.to_string()),
         Some(Command::Stop) => dispatch_stop().map_err(|e| e.to_string()),
-        Some(Command::Status) => dispatch_status().map_err(|e| e.to_string()),
+        Some(Command::Status) => dispatch_status().await.map_err(|e| e.to_string()),
         Some(Command::Restart(args)) => {
             dispatch_restart(config_path, args.port).map_err(|e| e.to_string())
         }
@@ -150,15 +153,45 @@ fn dispatch_stop(
 ) -> Result<(), mcp_gateway::adapters::driving::execution::process::error::DaemonError> {
     let pid_path = pid::default_pid_path().unwrap_or_default();
     pid::stop_daemon(&pid_path)?;
+    let sock_path = pid::default_sock_path().unwrap_or_default();
+    status_socket::remove_sock_file(&sock_path);
     tracing::info!("gateway stopped");
     Ok(())
 }
 
-fn dispatch_status(
+async fn dispatch_status(
 ) -> Result<(), mcp_gateway::adapters::driving::execution::process::error::DaemonError> {
     let pid_path = pid::default_pid_path().unwrap_or_default();
     match pid::daemon_status(&pid_path)? {
-        Some(p) => tracing::info!("gateway is running (PID {p})"),
+        Some(p) => {
+            tracing::info!("gateway is running (PID {p})");
+            let sock_path = pid::default_sock_path().unwrap_or_default();
+            match status_socket::query_status(&sock_path).await {
+                Ok(report) => {
+                    if report.providers.is_empty() {
+                        tracing::info!("no providers configured");
+                    } else {
+                        for provider in &report.providers {
+                            let status = if provider.connected {
+                                "connected"
+                            } else {
+                                "disconnected"
+                            };
+                            tracing::info!(
+                                "  {} ({} {}) — {}",
+                                provider.name,
+                                provider.provider_type,
+                                provider.target,
+                                status
+                            );
+                        }
+                    }
+                }
+                Err(_) => {
+                    tracing::info!("provider status unavailable");
+                }
+            }
+        }
         None => tracing::info!("gateway is not running"),
     }
     Ok(())
@@ -193,8 +226,13 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
     let has_cli_tools = !gateway_config.cli_operations.is_empty();
     let cli_tools = gateway_config.cli_operations;
     run_run(registry, |servers| async move {
-        let upstreams = build_upstreams(servers).await?;
-        if has_cli_tools {
+        let (upstreams, statuses) = build_upstreams(servers).await?;
+        let sock_path = pid::default_sock_path().unwrap_or_default();
+        let report = GatewayStatusReport {
+            providers: statuses,
+        };
+        let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
+        let result = if has_cli_tools {
             let cli_runner = ProcessCliRunner::new(cli_tools);
             let gateway = Gateway::new(upstreams, cli_runner);
             let adapter = Arc::new(McpAdapter::new(gateway));
@@ -219,22 +257,47 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
                     serve_proxy_http(adapter, port, ct, log_sender).await
                 }
             }
-        }
+        };
+        status_socket::remove_sock_file(&sock_path);
+        result
     })
     .await
 }
 
+fn describe_server_entry(entry: &McpServerEntry) -> (&str, &str) {
+    match entry {
+        McpServerEntry::Stdio(c) => ("stdio", &c.command),
+        McpServerEntry::Http(c) => ("http", &c.url),
+    }
+}
+
 async fn build_upstreams(
     servers: BTreeMap<String, McpServerEntry>,
-) -> Result<BTreeMap<String, ProviderHandle<RmcpProviderClient, DefaultPolicy>>, ProxyError> {
+) -> Result<
+    (
+        BTreeMap<String, ProviderHandle<RmcpProviderClient, DefaultPolicy>>,
+        Vec<ProviderStatus>,
+    ),
+    ProxyError,
+> {
     let mut upstreams = BTreeMap::new();
+    let mut statuses = Vec::new();
     for (name, entry) in servers {
+        let (provider_type, target) = describe_server_entry(&entry);
+        let provider_type = provider_type.to_string();
+        let target = target.to_string();
         let filter = CompoundPolicy::new(
             AllowlistPolicy::new(entry.allowed_operations().to_vec()),
             DenylistPolicy::new(entry.denied_operations().to_vec()),
         );
         match connect_upstream(&name, entry).await {
             Ok(service) => {
+                statuses.push(ProviderStatus {
+                    name: name.clone(),
+                    connected: true,
+                    provider_type,
+                    target,
+                });
                 upstreams.insert(
                     name,
                     ProviderHandle {
@@ -244,11 +307,17 @@ async fn build_upstreams(
                 );
             }
             Err(e) => {
+                statuses.push(ProviderStatus {
+                    name: name.clone(),
+                    connected: false,
+                    provider_type,
+                    target,
+                });
                 eprintln!("'{name}' failed to connect: {e}, skipping");
             }
         }
     }
-    Ok(upstreams)
+    Ok((upstreams, statuses))
 }
 
 async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
@@ -260,7 +329,12 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
     let has_cli_tools = !gateway_config.cli_operations.is_empty();
     let cli_tools = gateway_config.cli_operations;
     run_run(registry, |servers| async move {
-        let upstreams = build_upstreams(servers).await?;
+        let (upstreams, statuses) = build_upstreams(servers).await?;
+        let sock_path = pid::default_sock_path().unwrap_or_default();
+        let report = GatewayStatusReport {
+            providers: statuses,
+        };
+        let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
         let ct = CancellationToken::new();
         let ct_signal = ct.clone();
         tokio::spawn(async move {
@@ -272,7 +346,7 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
             sigterm.recv().await;
             ct_signal.cancel();
         });
-        if has_cli_tools {
+        let result = if has_cli_tools {
             let cli_runner = ProcessCliRunner::new(cli_tools);
             let gateway = Gateway::new(upstreams, cli_runner);
             let adapter = Arc::new(McpAdapter::new(gateway));
@@ -281,7 +355,9 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
             let gateway = Gateway::new(upstreams, NullCliRunner);
             let adapter = Arc::new(McpAdapter::new(gateway));
             serve_proxy_http(adapter, port, ct, log_sender).await
-        }
+        };
+        status_socket::remove_sock_file(&sock_path);
+        result
     })
     .await
 }

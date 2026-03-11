@@ -10,6 +10,10 @@ pub fn default_port_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".mcp-gateway.port"))
 }
 
+pub fn default_sock_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".mcp-gateway.sock"))
+}
+
 pub fn write_port(path: &Path, port: u16) -> Result<(), DaemonError> {
     std::fs::write(path, port.to_string()).map_err(|e| DaemonError::PidWrite {
         message: e.to_string(),
@@ -432,6 +436,14 @@ mod tests {
         std::fs::write(inner.join("file"), "data").unwrap();
         let result = remove_pid_file(&inner);
         assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
+    }
+
+    #[test]
+    fn default_sock_path_returns_some() {
+        let path = default_sock_path();
+        assert!(path.is_some());
+        let p = path.unwrap();
+        assert!(p.to_string_lossy().contains(".mcp-gateway.sock"));
     }
 
     #[test]
