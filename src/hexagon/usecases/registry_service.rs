@@ -1,23 +1,23 @@
 use std::collections::BTreeMap;
 
-use crate::hexagon::ports::ServerConfigStore;
+use crate::hexagon::ports::ProviderConfigStore;
 use crate::hexagon::usecases::registry_error::RegistryError;
 
-use super::add_allowed_tools::AddAllowedTools;
-use super::add_denied_tools::AddDeniedTools;
-use super::add_server::AddServer;
-use super::get_allowed_tools::GetAllowedTools;
-use super::get_denied_tools::GetDeniedTools;
-use super::list_servers::ListServers;
-use super::remove_allowed_tools::RemoveAllowedTools;
-use super::remove_denied_tools::RemoveDeniedTools;
-use super::remove_server::RemoveServer;
+use super::add_allowed_operations::AddAllowedOperations;
+use super::add_denied_operations::AddDeniedOperations;
+use super::add_provider::AddProvider;
+use super::get_allowed_operations::GetAllowedOperations;
+use super::get_denied_operations::GetDeniedOperations;
+use super::list_providers::ListProviders;
+use super::remove_allowed_operations::RemoveAllowedOperations;
+use super::remove_denied_operations::RemoveDeniedOperations;
+use super::remove_provider::RemoveProvider;
 
-pub struct RegistryService<S: ServerConfigStore> {
+pub struct RegistryService<S: ProviderConfigStore> {
     store: S,
 }
 
-impl<S: ServerConfigStore> RegistryService<S> {
+impl<S: ProviderConfigStore> RegistryService<S> {
     pub fn new(store: S) -> Self {
         Self { store }
     }
@@ -26,40 +26,52 @@ impl<S: ServerConfigStore> RegistryService<S> {
         &self.store
     }
 
-    pub fn list_servers(&self) -> Result<BTreeMap<String, S::Entry>, RegistryError> {
-        ListServers::execute(&self.store)
+    pub fn list_providers(&self) -> Result<BTreeMap<String, S::Entry>, RegistryError> {
+        ListProviders::execute(&self.store)
     }
 
-    pub fn add_server(&self, name: String, entry: S::Entry) -> Result<(), RegistryError> {
-        AddServer::execute(&self.store, name, entry)
+    pub fn add_provider(&self, name: String, entry: S::Entry) -> Result<(), RegistryError> {
+        AddProvider::execute(&self.store, name, entry)
     }
 
-    pub fn remove_server(&self, name: &str) -> Result<(), RegistryError> {
-        RemoveServer::execute(&self.store, name)
+    pub fn remove_provider(&self, name: &str) -> Result<(), RegistryError> {
+        RemoveProvider::execute(&self.store, name)
     }
 
-    pub fn get_allowed_tools(&self, name: &str) -> Result<Vec<String>, RegistryError> {
-        GetAllowedTools::execute(&self.store, name)
+    pub fn get_allowed_operations(&self, name: &str) -> Result<Vec<String>, RegistryError> {
+        GetAllowedOperations::execute(&self.store, name)
     }
 
-    pub fn add_allowed_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
-        AddAllowedTools::execute(&self.store, name, tools)
+    pub fn add_allowed_operations(
+        &self,
+        name: &str,
+        tools: &[String],
+    ) -> Result<(), RegistryError> {
+        AddAllowedOperations::execute(&self.store, name, tools)
     }
 
-    pub fn remove_allowed_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
-        RemoveAllowedTools::execute(&self.store, name, tools)
+    pub fn remove_allowed_operations(
+        &self,
+        name: &str,
+        tools: &[String],
+    ) -> Result<(), RegistryError> {
+        RemoveAllowedOperations::execute(&self.store, name, tools)
     }
 
-    pub fn get_denied_tools(&self, name: &str) -> Result<Vec<String>, RegistryError> {
-        GetDeniedTools::execute(&self.store, name)
+    pub fn get_denied_operations(&self, name: &str) -> Result<Vec<String>, RegistryError> {
+        GetDeniedOperations::execute(&self.store, name)
     }
 
-    pub fn add_denied_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
-        AddDeniedTools::execute(&self.store, name, tools)
+    pub fn add_denied_operations(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
+        AddDeniedOperations::execute(&self.store, name, tools)
     }
 
-    pub fn remove_denied_tools(&self, name: &str, tools: &[String]) -> Result<(), RegistryError> {
-        RemoveDeniedTools::execute(&self.store, name, tools)
+    pub fn remove_denied_operations(
+        &self,
+        name: &str,
+        tools: &[String],
+    ) -> Result<(), RegistryError> {
+        RemoveDeniedOperations::execute(&self.store, name, tools)
     }
 }
 
@@ -70,7 +82,7 @@ pub(crate) mod test_helpers {
     use std::sync::Mutex;
 
     use crate::adapters::driven::configuration::model::{HttpConfig, McpServerEntry, StdioConfig};
-    use crate::hexagon::ports::ServerConfigStore;
+    use crate::hexagon::ports::ProviderConfigStore;
 
     pub(crate) struct FakeConfigStore {
         entries: Mutex<BTreeMap<String, McpServerEntry>>,
@@ -84,7 +96,7 @@ pub(crate) mod test_helpers {
         }
     }
 
-    impl ServerConfigStore for FakeConfigStore {
+    impl ProviderConfigStore for FakeConfigStore {
         type Entry = McpServerEntry;
 
         fn load_entries(&self) -> Result<BTreeMap<String, McpServerEntry>, String> {
@@ -102,7 +114,7 @@ pub(crate) mod test_helpers {
         pub(crate) entries: BTreeMap<String, McpServerEntry>,
     }
 
-    impl ServerConfigStore for FailingStore {
+    impl ProviderConfigStore for FailingStore {
         type Entry = McpServerEntry;
 
         fn load_entries(&self) -> Result<BTreeMap<String, McpServerEntry>, String> {
@@ -123,8 +135,8 @@ pub(crate) mod test_helpers {
             command: "echo".to_string(),
             args: vec![],
             env: BTreeMap::new(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
         })
     }
 
@@ -132,8 +144,8 @@ pub(crate) mod test_helpers {
         McpServerEntry::Http(HttpConfig {
             url: "https://example.com".to_string(),
             headers: BTreeMap::new(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: None,
         })
     }

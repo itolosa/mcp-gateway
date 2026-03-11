@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
-use crate::hexagon::ports::ToolFilter;
+use crate::hexagon::ports::OperationPolicy;
 
-pub struct DenylistFilter {
+pub struct DenylistPolicy {
     denied: HashSet<String>,
 }
 
-impl DenylistFilter {
+impl DenylistPolicy {
     pub fn new(tools: Vec<String>) -> Self {
         Self {
             denied: tools.into_iter().collect(),
@@ -14,8 +14,8 @@ impl DenylistFilter {
     }
 }
 
-impl ToolFilter for DenylistFilter {
-    fn is_tool_allowed(&self, tool_name: &str) -> bool {
+impl OperationPolicy for DenylistPolicy {
+    fn is_allowed(&self, tool_name: &str) -> bool {
         !self.denied.contains(tool_name)
     }
 }
@@ -27,23 +27,23 @@ mod tests {
 
     #[test]
     fn empty_denylist_allows_all_tools() {
-        let filter = DenylistFilter::new(vec![]);
-        assert!(filter.is_tool_allowed("anything"));
-        assert!(filter.is_tool_allowed("another_tool"));
+        let filter = DenylistPolicy::new(vec![]);
+        assert!(filter.is_allowed("anything"));
+        assert!(filter.is_allowed("another_tool"));
     }
 
     #[test]
     fn non_empty_denylist_blocks_listed_tools() {
-        let filter = DenylistFilter::new(vec!["write".to_string(), "delete".to_string()]);
-        assert!(filter.is_tool_allowed("read"));
-        assert!(!filter.is_tool_allowed("write"));
-        assert!(!filter.is_tool_allowed("delete"));
+        let filter = DenylistPolicy::new(vec!["write".to_string(), "delete".to_string()]);
+        assert!(filter.is_allowed("read"));
+        assert!(!filter.is_allowed("write"));
+        assert!(!filter.is_allowed("delete"));
     }
 
     #[test]
     fn single_tool_denylist() {
-        let filter = DenylistFilter::new(vec!["blocked".to_string()]);
-        assert!(!filter.is_tool_allowed("blocked"));
-        assert!(filter.is_tool_allowed("allowed"));
+        let filter = DenylistPolicy::new(vec!["blocked".to_string()]);
+        assert!(!filter.is_allowed("blocked"));
+        assert!(filter.is_allowed("allowed"));
     }
 }

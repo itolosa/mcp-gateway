@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
-use crate::hexagon::ports::ToolFilter;
+use crate::hexagon::ports::OperationPolicy;
 
-pub struct AllowlistFilter {
+pub struct AllowlistPolicy {
     allowed: HashSet<String>,
 }
 
-impl AllowlistFilter {
+impl AllowlistPolicy {
     pub fn new(tools: Vec<String>) -> Self {
         Self {
             allowed: tools.into_iter().collect(),
@@ -14,8 +14,8 @@ impl AllowlistFilter {
     }
 }
 
-impl ToolFilter for AllowlistFilter {
-    fn is_tool_allowed(&self, tool_name: &str) -> bool {
+impl OperationPolicy for AllowlistPolicy {
+    fn is_allowed(&self, tool_name: &str) -> bool {
         self.allowed.is_empty() || self.allowed.contains(tool_name)
     }
 }
@@ -27,24 +27,24 @@ mod tests {
 
     #[test]
     fn empty_allowlist_allows_all_tools() {
-        let filter = AllowlistFilter::new(vec![]);
-        assert!(filter.is_tool_allowed("anything"));
-        assert!(filter.is_tool_allowed("another_tool"));
+        let filter = AllowlistPolicy::new(vec![]);
+        assert!(filter.is_allowed("anything"));
+        assert!(filter.is_allowed("another_tool"));
     }
 
     #[test]
     fn non_empty_allowlist_allows_only_listed_tools() {
-        let filter = AllowlistFilter::new(vec!["read".to_string(), "search".to_string()]);
-        assert!(filter.is_tool_allowed("read"));
-        assert!(filter.is_tool_allowed("search"));
-        assert!(!filter.is_tool_allowed("write"));
-        assert!(!filter.is_tool_allowed("delete"));
+        let filter = AllowlistPolicy::new(vec!["read".to_string(), "search".to_string()]);
+        assert!(filter.is_allowed("read"));
+        assert!(filter.is_allowed("search"));
+        assert!(!filter.is_allowed("write"));
+        assert!(!filter.is_allowed("delete"));
     }
 
     #[test]
     fn single_tool_allowlist() {
-        let filter = AllowlistFilter::new(vec!["only_this".to_string()]);
-        assert!(filter.is_tool_allowed("only_this"));
-        assert!(!filter.is_tool_allowed("not_this"));
+        let filter = AllowlistPolicy::new(vec!["only_this".to_string()]);
+        assert!(filter.is_allowed("only_this"));
+        assert!(!filter.is_allowed("not_this"));
     }
 }

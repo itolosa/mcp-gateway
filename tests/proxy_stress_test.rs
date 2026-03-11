@@ -3,17 +3,17 @@ mod proxy_stress {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
-    use mcp_gateway::adapters::driven::configuration::model::CliToolDef;
+    use mcp_gateway::adapters::driven::configuration::model::CliOperationDef;
     use mcp_gateway::adapters::driven::connectivity::cli_execution::{
         NullCliRunner, ProcessCliRunner,
     };
     use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{
-        McpAdapter, RmcpUpstreamClient,
+        McpAdapter, RmcpProviderClient,
     };
-    use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistFilter;
-    use mcp_gateway::hexagon::entities::policy::compound::CompoundFilter;
-    use mcp_gateway::hexagon::entities::policy::denylist::DenylistFilter;
-    use mcp_gateway::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
+    use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistPolicy;
+    use mcp_gateway::hexagon::entities::policy::compound::CompoundPolicy;
+    use mcp_gateway::hexagon::entities::policy::denylist::DenylistPolicy;
+    use mcp_gateway::hexagon::usecases::gateway::{Gateway, ProviderHandle};
     use rmcp::model::{
         CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -127,8 +127,8 @@ mod proxy_stress {
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    fn passthrough_filter() -> CompoundFilter<AllowlistFilter, DenylistFilter> {
-        CompoundFilter::new(AllowlistFilter::new(vec![]), DenylistFilter::new(vec![]))
+    fn passthrough_filter() -> CompoundPolicy<AllowlistPolicy, DenylistPolicy> {
+        CompoundPolicy::new(AllowlistPolicy::new(vec![]), DenylistPolicy::new(vec![]))
     }
 
     async fn setup_proxy() -> (
@@ -167,7 +167,7 @@ mod proxy_stress {
 
         let upstream_client = ().serve(upstream_client_transport).await.unwrap();
 
-        let mut client = RmcpUpstreamClient::new(upstream_client);
+        let mut client = RmcpProviderClient::new(upstream_client);
         if let Some(t) = timeout {
             client = client.with_operation_timeout(t);
         }
@@ -175,7 +175,7 @@ mod proxy_stress {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "srv".to_string(),
-            UpstreamEntry {
+            ProviderHandle {
                 client,
                 filter: passthrough_filter(),
             },
@@ -463,8 +463,8 @@ mod proxy_stress {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "srv".to_string(),
-            UpstreamEntry {
-                client: RmcpUpstreamClient::new(upstream_client),
+            ProviderHandle {
+                client: RmcpProviderClient::new(upstream_client),
                 filter: passthrough_filter(),
             },
         );
@@ -507,8 +507,8 @@ mod proxy_stress {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "srv".to_string(),
-            UpstreamEntry {
-                client: RmcpUpstreamClient::new(upstream_client),
+            ProviderHandle {
+                client: RmcpProviderClient::new(upstream_client),
                 filter: passthrough_filter(),
             },
         );
@@ -542,7 +542,7 @@ mod proxy_stress {
         let mut tools = BTreeMap::new();
         tools.insert(
             name.to_string(),
-            CliToolDef {
+            CliOperationDef {
                 command: command.to_string(),
                 description: Some(format!("Stress test tool: {command}")),
             },
@@ -569,8 +569,8 @@ mod proxy_stress {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "srv".to_string(),
-            UpstreamEntry {
-                client: RmcpUpstreamClient::new(upstream_client),
+            ProviderHandle {
+                client: RmcpProviderClient::new(upstream_client),
                 filter: passthrough_filter(),
             },
         );

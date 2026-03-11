@@ -10,8 +10,8 @@ pub enum RegistryError {
 impl fmt::Display for RegistryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AlreadyExists { name } => write!(f, "server '{name}' already exists"),
-            Self::NotFound { name } => write!(f, "server '{name}' not found"),
+            Self::AlreadyExists { name } => write!(f, "provider '{name}' already exists"),
+            Self::NotFound { name } => write!(f, "provider '{name}' not found"),
             Self::Storage(msg) => write!(f, "storage error: {msg}"),
         }
     }

@@ -1,10 +1,10 @@
-use crate::hexagon::ports::ServerConfigStore;
+use crate::hexagon::ports::ProviderConfigStore;
 use crate::hexagon::usecases::registry_error::RegistryError;
 
-pub(crate) struct AddServer;
+pub(crate) struct AddProvider;
 
-impl AddServer {
-    pub(crate) fn execute<S: ServerConfigStore>(
+impl AddProvider {
+    pub(crate) fn execute<S: ProviderConfigStore>(
         store: &S,
         name: String,
         entry: S::Entry,
@@ -25,23 +25,23 @@ impl AddServer {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::hexagon::ports::ServerConfigStore;
+    use crate::hexagon::ports::ProviderConfigStore;
     use crate::hexagon::usecases::registry_error::RegistryError;
     use crate::hexagon::usecases::registry_service::test_helpers::*;
 
-    use super::AddServer;
+    use super::AddProvider;
 
     #[test]
     fn add_to_empty_config_succeeds() {
         let store = FakeConfigStore::new(BTreeMap::new());
-        let result = AddServer::execute(&store, "test".to_string(), stdio_entry());
+        let result = AddProvider::execute(&store, "test".to_string(), stdio_entry());
         assert!(result.is_ok());
     }
 
     #[test]
     fn add_persists_to_store() {
         let store = FakeConfigStore::new(BTreeMap::new());
-        AddServer::execute(&store, "my-server".to_string(), http_entry()).unwrap();
+        AddProvider::execute(&store, "my-server".to_string(), http_entry()).unwrap();
 
         let entries = store.load_entries().unwrap();
         assert!(entries.contains_key("my-server"));
@@ -53,7 +53,7 @@ mod tests {
         entries.insert("existing".to_string(), stdio_entry());
         let store = FakeConfigStore::new(entries);
 
-        let result = AddServer::execute(&store, "existing".to_string(), http_entry());
+        let result = AddProvider::execute(&store, "existing".to_string(), http_entry());
         assert!(matches!(
             result,
             Err(RegistryError::AlreadyExists { name }) if name == "existing"
@@ -66,7 +66,7 @@ mod tests {
             fail_load: true,
             entries: BTreeMap::new(),
         };
-        let result = AddServer::execute(&store, "test".to_string(), stdio_entry());
+        let result = AddProvider::execute(&store, "test".to_string(), stdio_entry());
         assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
@@ -76,7 +76,7 @@ mod tests {
             fail_load: false,
             entries: BTreeMap::new(),
         };
-        let result = AddServer::execute(&store, "test".to_string(), stdio_entry());
+        let result = AddProvider::execute(&store, "test".to_string(), stdio_entry());
         assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 }

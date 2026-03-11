@@ -4,15 +4,15 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::service::{RoleClient, RunningService};
 
 use crate::hexagon::ports::{
-    ToolCallRequest, ToolCallResult, ToolDescriptor, UpstreamClient, UpstreamError,
+    OperationCallRequest, OperationCallResult, OperationDescriptor, ProviderClient, ProviderError,
 };
 
-pub struct RmcpUpstreamClient {
+pub struct RmcpProviderClient {
     service: RunningService<RoleClient, ()>,
     operation_timeout: Option<Duration>,
 }
 
-impl RmcpUpstreamClient {
+impl RmcpProviderClient {
     pub fn new(service: RunningService<RoleClient, ()>) -> Self {
         Self {
             service,
@@ -26,21 +26,21 @@ impl RmcpUpstreamClient {
     }
 }
 
-impl UpstreamClient for RmcpUpstreamClient {
-    async fn list_tools(&self) -> Result<Vec<ToolDescriptor>, UpstreamError> {
+impl ProviderClient for RmcpProviderClient {
+    async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, ProviderError> {
         let fut = self.service.list_tools(None);
         let rmcp_result = if let Some(timeout) = self.operation_timeout {
             tokio::time::timeout(timeout, fut)
                 .await
-                .map_err(|_| UpstreamError::Service("operation timed out".to_string()))?
+                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
         } else {
             fut.await
         };
-        let result = rmcp_result.map_err(|e| UpstreamError::Service(e.to_string()))?;
+        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
         Ok(result
             .tools
             .into_iter()
-            .map(|t| ToolDescriptor {
+            .map(|t| OperationDescriptor {
                 name: t.name.to_string(),
                 description: t.description.map(|d| d.to_string()),
                 schema: serde_json::to_string(&*t.input_schema).unwrap_or_default(),
@@ -48,7 +48,10 @@ impl UpstreamClient for RmcpUpstreamClient {
             .collect())
     }
 
-    async fn call_tool(&self, request: ToolCallRequest) -> Result<ToolCallResult, UpstreamError> {
+    async fn call_operation(
+        &self,
+        request: OperationCallRequest,
+    ) -> Result<OperationCallResult, ProviderError> {
         let mut params = CallToolRequestParams::new(request.name);
         params.arguments = request
             .arguments
@@ -57,17 +60,17 @@ impl UpstreamClient for RmcpUpstreamClient {
         let rmcp_result = if let Some(timeout) = self.operation_timeout {
             tokio::time::timeout(timeout, fut)
                 .await
-                .map_err(|_| UpstreamError::Service("operation timed out".to_string()))?
+                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
         } else {
             fut.await
         };
-        let result = rmcp_result.map_err(|e| UpstreamError::Service(e.to_string()))?;
+        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
         let content = result
             .content
             .into_iter()
             .map(|c| serde_json::to_string(&c).unwrap_or_default())
             .collect();
-        Ok(ToolCallResult {
+        Ok(OperationCallResult {
             content,
             is_error: result.is_error.unwrap_or(false),
         })

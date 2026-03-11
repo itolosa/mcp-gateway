@@ -1,34 +1,34 @@
 use std::collections::BTreeMap;
 
 use crate::hexagon::ports::{
-    CliToolRunner, GatewayError, ToolDescriptor, ToolFilter, UpstreamClient,
+    CliOperationRunner, GatewayError, OperationDescriptor, OperationPolicy, ProviderClient,
 };
-use crate::hexagon::usecases::prefix::prefix_tool_name;
+use crate::hexagon::usecases::mapping::encode;
 
-use super::gateway::UpstreamEntry;
+use super::gateway::ProviderHandle;
 
-pub(crate) struct ListTools;
+pub(crate) struct ListOperations;
 
-impl ListTools {
-    pub(crate) async fn execute<U: UpstreamClient, C: CliToolRunner, F: ToolFilter>(
-        upstreams: &BTreeMap<String, UpstreamEntry<U, F>>,
+impl ListOperations {
+    pub(crate) async fn execute<U: ProviderClient, C: CliOperationRunner, F: OperationPolicy>(
+        providers: &BTreeMap<String, ProviderHandle<U, F>>,
         cli_runner: &C,
-    ) -> Result<Vec<ToolDescriptor>, GatewayError> {
-        let mut all_tools = Vec::new();
-        for (name, entry) in upstreams {
-            let tools = match entry.client.list_tools().await {
-                Ok(tools) => tools,
+    ) -> Result<Vec<OperationDescriptor>, GatewayError> {
+        let mut all_operations = Vec::new();
+        for (name, entry) in providers {
+            let operations = match entry.client.list_operations().await {
+                Ok(ops) => ops,
                 Err(_) => continue,
             };
-            for mut tool in tools {
-                if entry.filter.is_tool_allowed(&tool.name) {
-                    tool.name = prefix_tool_name(name, &tool.name);
-                    all_tools.push(tool);
+            for mut op in operations {
+                if entry.filter.is_allowed(&op.name) {
+                    op.name = encode(name, &op.name);
+                    all_operations.push(op);
                 }
             }
         }
-        all_tools.extend(cli_runner.list_tools());
-        Ok(all_tools)
+        all_operations.extend(cli_runner.list_operations());
+        Ok(all_operations)
     }
 }
 
@@ -38,18 +38,18 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::adapters::driven::connectivity::cli_execution::NullCliRunner;
-    use crate::hexagon::entities::policy::allowlist::AllowlistFilter;
-    use crate::hexagon::entities::policy::compound::CompoundFilter;
-    use crate::hexagon::entities::policy::denylist::DenylistFilter;
+    use crate::hexagon::entities::policy::allowlist::AllowlistPolicy;
+    use crate::hexagon::entities::policy::compound::CompoundPolicy;
+    use crate::hexagon::entities::policy::denylist::DenylistPolicy;
     use crate::hexagon::usecases::gateway::test_helpers::*;
-    use crate::hexagon::usecases::gateway::UpstreamEntry;
+    use crate::hexagon::usecases::gateway::ProviderHandle;
 
-    use super::ListTools;
+    use super::ListOperations;
 
     #[tokio::test]
     async fn list_tools_returns_prefixed_tools_from_all_upstreams() {
         let upstreams = two_server_setup();
-        let result = ListTools::execute(&upstreams, &NullCliRunner)
+        let result = ListOperations::execute(&upstreams, &NullCliRunner)
             .await
             .unwrap();
         let names: Vec<&str> = result.iter().map(|t| t.name.as_str()).collect();
@@ -60,9 +60,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_no_upstreams_returns_empty() {
-        let upstreams: BTreeMap<String, UpstreamEntry<DualMockServer, TestFilter>> =
+        let upstreams: BTreeMap<String, ProviderHandle<DualMockServer, TestFilter>> =
             BTreeMap::new();
-        let result = ListTools::execute(&upstreams, &NullCliRunner)
+        let result = ListOperations::execute(&upstreams, &NullCliRunner)
             .await
             .unwrap();
         assert!(result.is_empty());
@@ -73,26 +73,26 @@ mod tests {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "alpha".to_string(),
-            UpstreamEntry {
+            ProviderHandle {
                 client: DualMockServer {
                     server_name: "alpha",
                 },
-                filter: CompoundFilter::new(
-                    AllowlistFilter::new(vec!["nonexistent".to_string()]),
-                    DenylistFilter::new(vec![]),
+                filter: CompoundPolicy::new(
+                    AllowlistPolicy::new(vec!["nonexistent".to_string()]),
+                    DenylistPolicy::new(vec![]),
                 ),
             },
         );
         upstreams.insert(
             "beta".to_string(),
-            UpstreamEntry {
+            ProviderHandle {
                 client: DualMockServer {
                     server_name: "beta",
                 },
                 filter: passthrough_filter(),
             },
         );
-        let result = ListTools::execute(&upstreams, &NullCliRunner)
+        let result = ListOperations::execute(&upstreams, &NullCliRunner)
             .await
             .unwrap();
         let names: Vec<&str> = result.iter().map(|t| t.name.as_str()).collect();
@@ -104,17 +104,17 @@ mod tests {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "alpha".to_string(),
-            UpstreamEntry {
+            ProviderHandle {
                 client: DualMockServer {
                     server_name: "alpha",
                 },
-                filter: CompoundFilter::new(
-                    AllowlistFilter::new(vec![]),
-                    DenylistFilter::new(vec!["echo".to_string()]),
+                filter: CompoundPolicy::new(
+                    AllowlistPolicy::new(vec![]),
+                    DenylistPolicy::new(vec!["echo".to_string()]),
                 ),
             },
         );
-        let result = ListTools::execute(&upstreams, &NullCliRunner)
+        let result = ListOperations::execute(&upstreams, &NullCliRunner)
             .await
             .unwrap();
         assert!(result.is_empty());
@@ -123,7 +123,7 @@ mod tests {
     #[tokio::test]
     async fn list_tools_includes_cli_tools_unprefixed() {
         let upstreams = two_server_setup();
-        let result = ListTools::execute(&upstreams, &MockCliRunner)
+        let result = ListOperations::execute(&upstreams, &MockCliRunner)
             .await
             .unwrap();
         let names: Vec<&str> = result.iter().map(|t| t.name.as_str()).collect();
@@ -135,9 +135,9 @@ mod tests {
 
     #[tokio::test]
     async fn cli_tools_only_no_upstreams() {
-        let upstreams: BTreeMap<String, UpstreamEntry<DualMockServer, TestFilter>> =
+        let upstreams: BTreeMap<String, ProviderHandle<DualMockServer, TestFilter>> =
             BTreeMap::new();
-        let result = ListTools::execute(&upstreams, &MockCliRunner)
+        let result = ListOperations::execute(&upstreams, &MockCliRunner)
             .await
             .unwrap();
         assert_eq!(result.len(), 1);
@@ -149,7 +149,7 @@ mod tests {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "good".to_string(),
-            UpstreamEntry {
+            ProviderHandle {
                 client: TestUpstream::Fast(DualMockServer {
                     server_name: "alpha",
                 }),
@@ -158,12 +158,12 @@ mod tests {
         );
         upstreams.insert(
             "bad".to_string(),
-            UpstreamEntry {
+            ProviderHandle {
                 client: TestUpstream::Failing(FailingUpstream),
                 filter: passthrough_filter(),
             },
         );
-        let result = ListTools::execute(&upstreams, &NullCliRunner)
+        let result = ListOperations::execute(&upstreams, &NullCliRunner)
             .await
             .unwrap();
         let names: Vec<&str> = result.iter().map(|t| t.name.as_str()).collect();

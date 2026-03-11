@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::driven::configuration::error::ConfigError;
 use crate::adapters::driven::configuration::model::{GatewayConfig, McpServerEntry};
-use crate::hexagon::ports::ServerConfigStore;
+use crate::hexagon::ports::ProviderConfigStore;
 
 pub trait ConfigStore {
     fn load(&self) -> Result<GatewayConfig, ConfigError>;
@@ -66,7 +66,7 @@ impl ConfigStore for FileConfigStore {
     }
 }
 
-impl ServerConfigStore for FileConfigStore {
+impl ProviderConfigStore for FileConfigStore {
     type Entry = McpServerEntry;
 
     fn load_entries(&self) -> Result<BTreeMap<String, McpServerEntry>, String> {
@@ -192,7 +192,7 @@ mod tests {
         .unwrap();
 
         let store = FileConfigStore::new(&path);
-        let entries = ServerConfigStore::load_entries(&store).unwrap();
+        let entries = ProviderConfigStore::load_entries(&store).unwrap();
         assert!(entries.contains_key("test"));
     }
 
@@ -210,14 +210,14 @@ mod tests {
                     command: "echo".to_string(),
                     args: vec![],
                     env: BTreeMap::new(),
-                    allowed_tools: vec![],
-                    denied_tools: vec![],
+                    allowed_operations: vec![],
+                    denied_operations: vec![],
                 },
             ),
         );
-        ServerConfigStore::save_entries(&store, entries).unwrap();
+        ProviderConfigStore::save_entries(&store, entries).unwrap();
 
-        let loaded = ServerConfigStore::load_entries(&store).unwrap();
+        let loaded = ProviderConfigStore::load_entries(&store).unwrap();
         assert!(loaded.contains_key("s1"));
     }
 
@@ -226,7 +226,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = FileConfigStore::new(&dir.path().join("nonexistent.json"));
 
-        let entries = ServerConfigStore::load_entries(&store).unwrap();
+        let entries = ProviderConfigStore::load_entries(&store).unwrap();
         assert!(entries.is_empty());
     }
 
@@ -237,14 +237,14 @@ mod tests {
         std::fs::write(&path, "not json").unwrap();
 
         let store = FileConfigStore::new(&path);
-        let result = ServerConfigStore::load_entries(&store);
+        let result = ProviderConfigStore::load_entries(&store);
         assert!(result.is_err());
     }
 
     #[test]
     fn save_entries_to_invalid_path_returns_error() {
         let store = FileConfigStore::new(Path::new("/dev/null/impossible/config.json"));
-        let result = ServerConfigStore::save_entries(&store, BTreeMap::new());
+        let result = ProviderConfigStore::save_entries(&store, BTreeMap::new());
         assert!(result.is_err());
     }
 
@@ -262,8 +262,8 @@ mod tests {
                     command: "echo".to_string(),
                     args: vec!["hello".to_string()],
                     env: std::collections::BTreeMap::new(),
-                    allowed_tools: vec![],
-                    denied_tools: vec![],
+                    allowed_operations: vec![],
+                    denied_operations: vec![],
                 },
             ),
         );

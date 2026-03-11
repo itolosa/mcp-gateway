@@ -2,5 +2,5 @@ pub mod allowlist;
 pub mod compound;
 pub mod denylist;
 
-pub type DefaultFilter =
-    compound::CompoundFilter<allowlist::AllowlistFilter, denylist::DenylistFilter>;
+pub type DefaultPolicy =
+    compound::CompoundPolicy<allowlist::AllowlistPolicy, denylist::DenylistPolicy>;

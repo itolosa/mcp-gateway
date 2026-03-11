@@ -8,15 +8,15 @@ use super::command::{
 };
 use crate::adapters::driven::configuration::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
-use crate::hexagon::ports::ServerConfigStore;
+use crate::hexagon::ports::ProviderConfigStore;
 use crate::hexagon::usecases::registry_error::RegistryError;
 use crate::hexagon::usecases::registry_service::RegistryService;
 
-pub fn run_list<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_list<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     out: &mut impl Write,
 ) -> Result<(), RegistryError> {
-    let servers = service.list_servers()?;
+    let servers = service.list_providers()?;
     if servers.is_empty() {
         return Ok(());
     }
@@ -40,74 +40,74 @@ pub async fn run_run<S, F, Fut>(
     run_proxy: F,
 ) -> Result<(), ProxyError>
 where
-    S: ServerConfigStore<Entry = McpServerEntry>,
+    S: ProviderConfigStore<Entry = McpServerEntry>,
     F: FnOnce(BTreeMap<String, McpServerEntry>) -> Fut,
     Fut: Future<Output = Result<(), ProxyError>>,
 {
-    let servers = service.list_servers()?;
+    let servers = service.list_providers()?;
     run_proxy(servers).await
 }
 
-pub fn run_remove<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_remove<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: RemoveArgs,
 ) -> Result<(), RegistryError> {
-    service.remove_server(&args.name)
+    service.remove_provider(&args.name)
 }
 
-pub fn run_allowlist_add<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_allowlist_add<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: AllowlistModifyArgs,
 ) -> Result<(), RegistryError> {
-    service.add_allowed_tools(&args.name, &args.tools)
+    service.add_allowed_operations(&args.name, &args.tools)
 }
 
-pub fn run_allowlist_remove<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_allowlist_remove<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: AllowlistModifyArgs,
 ) -> Result<(), RegistryError> {
-    service.remove_allowed_tools(&args.name, &args.tools)
+    service.remove_allowed_operations(&args.name, &args.tools)
 }
 
-pub fn run_allowlist_show<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_allowlist_show<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: AllowlistShowArgs,
     out: &mut impl Write,
 ) -> Result<(), RegistryError> {
-    let tools = service.get_allowed_tools(&args.name)?;
+    let tools = service.get_allowed_operations(&args.name)?;
     for tool in &tools {
         let _ = writeln!(out, "{tool}");
     }
     Ok(())
 }
 
-pub fn run_denylist_add<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_denylist_add<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: DenylistModifyArgs,
 ) -> Result<(), RegistryError> {
-    service.add_denied_tools(&args.name, &args.tools)
+    service.add_denied_operations(&args.name, &args.tools)
 }
 
-pub fn run_denylist_remove<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_denylist_remove<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: DenylistModifyArgs,
 ) -> Result<(), RegistryError> {
-    service.remove_denied_tools(&args.name, &args.tools)
+    service.remove_denied_operations(&args.name, &args.tools)
 }
 
-pub fn run_denylist_show<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_denylist_show<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: DenylistShowArgs,
     out: &mut impl Write,
 ) -> Result<(), RegistryError> {
-    let tools = service.get_denied_tools(&args.name)?;
+    let tools = service.get_denied_operations(&args.name)?;
     for tool in &tools {
         let _ = writeln!(out, "{tool}");
     }
     Ok(())
 }
 
-pub fn run_add<S: ServerConfigStore<Entry = McpServerEntry>>(
+pub fn run_add<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
     args: AddArgs,
 ) -> Result<(), RegistryError> {
@@ -119,7 +119,7 @@ pub fn run_add<S: ServerConfigStore<Entry = McpServerEntry>>(
         args.url,
         args.headers,
     );
-    service.add_server(args.name, entry)
+    service.add_provider(args.name, entry)
 }
 
 fn build_entry(
@@ -135,14 +135,14 @@ fn build_entry(
             command: command.unwrap_or_default(),
             args,
             env: env_vars.into_iter().collect::<BTreeMap<_, _>>(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
         }),
         TransportType::Http => McpServerEntry::Http(HttpConfig {
             url: url.unwrap_or_default(),
             headers: headers.into_iter().collect::<BTreeMap<_, _>>(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: None,
         }),
     }
@@ -176,7 +176,7 @@ mod tests {
         }
     }
 
-    impl ServerConfigStore for FakeConfigStore {
+    impl ProviderConfigStore for FakeConfigStore {
         type Entry = McpServerEntry;
 
         fn load_entries(&self) -> Result<BTreeMap<String, McpServerEntry>, String> {
@@ -200,8 +200,8 @@ mod tests {
                 command: command.to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
             }),
         );
         config
@@ -236,8 +236,8 @@ mod tests {
                 command: "node".to_string(),
                 args: vec!["server.js".to_string()],
                 env: BTreeMap::from([("KEY".to_string(), "val".to_string())]),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
             })
         );
     }
@@ -266,8 +266,8 @@ mod tests {
             &McpServerEntry::Http(HttpConfig {
                 url: "https://example.com".to_string(),
                 headers: BTreeMap::from([("Auth".to_string(), "tok".to_string())]),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
                 auth: None,
             })
         );
@@ -282,8 +282,8 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
             }),
         );
         let store = FakeConfigStore::new(initial);
@@ -319,8 +319,8 @@ mod tests {
                 command: "cmd".to_string(),
                 args: vec!["arg".to_string()],
                 env: BTreeMap::from([("K".to_string(), "V".to_string())]),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
             })
         );
     }
@@ -340,8 +340,8 @@ mod tests {
             McpServerEntry::Http(HttpConfig {
                 url: "https://x.com".to_string(),
                 headers: BTreeMap::from([("H".to_string(), "V".to_string())]),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
                 auth: None,
             })
         );
@@ -353,8 +353,8 @@ mod tests {
             command: "node".to_string(),
             args: vec![],
             env: BTreeMap::new(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
         });
         assert_eq!(describe_entry(&entry), ("stdio", "node"));
     }
@@ -364,8 +364,8 @@ mod tests {
         let entry = McpServerEntry::Http(HttpConfig {
             url: "https://example.com".to_string(),
             headers: BTreeMap::new(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: None,
         });
         assert_eq!(describe_entry(&entry), ("http", "https://example.com"));
@@ -390,8 +390,8 @@ mod tests {
                 command: "node".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
             }),
         );
         config.mcp_servers.insert(
@@ -399,8 +399,8 @@ mod tests {
             McpServerEntry::Http(HttpConfig {
                 url: "https://example.com".to_string(),
                 headers: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
                 auth: None,
             }),
         );
@@ -439,8 +439,8 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec![],
+                allowed_operations: vec![],
+                denied_operations: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -529,7 +529,7 @@ mod tests {
 
         let entries = service.store().load_entries().unwrap();
         let entry = entries.get("test").unwrap();
-        assert_eq!(entry.allowed_tools(), &["read", "write"]);
+        assert_eq!(entry.allowed_operations(), &["read", "write"]);
     }
 
     #[test]
@@ -554,8 +554,8 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec!["read".to_string(), "write".to_string()],
-                denied_tools: vec![],
+                allowed_operations: vec!["read".to_string(), "write".to_string()],
+                denied_operations: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -569,7 +569,7 @@ mod tests {
 
         let entries = service.store().load_entries().unwrap();
         let entry = entries.get("test").unwrap();
-        assert_eq!(entry.allowed_tools(), &["write"]);
+        assert_eq!(entry.allowed_operations(), &["write"]);
     }
 
     #[test]
@@ -594,8 +594,8 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec!["read".to_string(), "write".to_string()],
-                denied_tools: vec![],
+                allowed_operations: vec!["read".to_string(), "write".to_string()],
+                denied_operations: vec![],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -683,7 +683,7 @@ mod tests {
 
         let entries = service.store().load_entries().unwrap();
         let entry = entries.get("test").unwrap();
-        assert_eq!(entry.denied_tools(), &["delete", "exec"]);
+        assert_eq!(entry.denied_operations(), &["delete", "exec"]);
     }
 
     #[test]
@@ -708,8 +708,8 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec!["delete".to_string(), "exec".to_string()],
+                allowed_operations: vec![],
+                denied_operations: vec!["delete".to_string(), "exec".to_string()],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -723,7 +723,7 @@ mod tests {
 
         let entries = service.store().load_entries().unwrap();
         let entry = entries.get("test").unwrap();
-        assert_eq!(entry.denied_tools(), &["exec"]);
+        assert_eq!(entry.denied_operations(), &["exec"]);
     }
 
     #[test]
@@ -748,8 +748,8 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec!["delete".to_string(), "exec".to_string()],
+                allowed_operations: vec![],
+                denied_operations: vec!["delete".to_string(), "exec".to_string()],
             }),
         );
         let store = FakeConfigStore::new(config);
@@ -833,8 +833,8 @@ mod tests {
     async fn e2e_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
         use crate::adapters::driven::connectivity::cli_execution::NullCliRunner;
         use crate::adapters::driven::connectivity::mcp_protocol::McpAdapter;
-        use crate::adapters::driven::connectivity::mcp_protocol::RmcpUpstreamClient;
-        use crate::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
+        use crate::adapters::driven::connectivity::mcp_protocol::RmcpProviderClient;
+        use crate::hexagon::usecases::gateway::{Gateway, ProviderHandle};
         use rmcp::ServiceExt;
 
         let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);
@@ -850,11 +850,11 @@ mod tests {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "test".to_string(),
-            UpstreamEntry {
-                client: RmcpUpstreamClient::new(upstream),
-                filter: crate::hexagon::entities::policy::compound::CompoundFilter::new(
-                    crate::hexagon::entities::policy::allowlist::AllowlistFilter::new(vec![]),
-                    crate::hexagon::entities::policy::denylist::DenylistFilter::new(vec![]),
+            ProviderHandle {
+                client: RmcpProviderClient::new(upstream),
+                filter: crate::hexagon::entities::policy::compound::CompoundPolicy::new(
+                    crate::hexagon::entities::policy::allowlist::AllowlistPolicy::new(vec![]),
+                    crate::hexagon::entities::policy::denylist::DenylistPolicy::new(vec![]),
                 ),
             },
         );

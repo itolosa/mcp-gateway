@@ -2,56 +2,60 @@ use std::collections::BTreeMap;
 
 use tokio::io::AsyncWriteExt;
 
-use crate::adapters::driven::configuration::model::CliToolDef;
+use crate::adapters::driven::configuration::model::CliOperationDef;
 use crate::hexagon::ports::{
-    CliToolRunner, GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor,
+    CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
+    OperationDescriptor,
 };
 
 pub struct ProcessCliRunner {
-    tools: BTreeMap<String, CliToolDef>,
+    tools: BTreeMap<String, CliOperationDef>,
 }
 
 impl ProcessCliRunner {
-    pub fn new(tools: BTreeMap<String, CliToolDef>) -> Self {
+    pub fn new(tools: BTreeMap<String, CliOperationDef>) -> Self {
         Self { tools }
     }
 }
 
-impl CliToolRunner for ProcessCliRunner {
-    fn list_tools(&self) -> Vec<ToolDescriptor> {
+impl CliOperationRunner for ProcessCliRunner {
+    fn list_operations(&self) -> Vec<OperationDescriptor> {
         self.tools
             .iter()
             .map(|(name, def)| build_tool_descriptor(name, def))
             .collect()
     }
 
-    fn has_tool(&self, name: &str) -> bool {
+    fn has_operation(&self, name: &str) -> bool {
         self.tools.contains_key(name)
     }
 
-    async fn call_tool(&self, request: &ToolCallRequest) -> Result<ToolCallResult, GatewayError> {
+    async fn call_operation(
+        &self,
+        request: &OperationCallRequest,
+    ) -> Result<OperationCallResult, GatewayError> {
         let name = &request.name;
         let def = self
             .tools
             .get(name.as_str())
-            .ok_or_else(|| GatewayError::CliTool(format!("unknown CLI tool: {name}")))?;
+            .ok_or_else(|| GatewayError::CliOperation(format!("unknown CLI operation: {name}")))?;
 
         let input_json = request.arguments.as_deref().unwrap_or("{}");
 
-        let output = run_command(&def.command, input_json)
-            .await
-            .map_err(|e| GatewayError::CliTool(format!("failed to run '{}': {e}", def.command)))?;
+        let output = run_command(&def.command, input_json).await.map_err(|e| {
+            GatewayError::CliOperation(format!("failed to run '{}': {e}", def.command))
+        })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if output.status.success() {
-            Ok(ToolCallResult {
+            Ok(OperationCallResult {
                 content: vec![serde_json::json!({"type": "text", "text": stdout}).to_string()],
                 is_error: false,
             })
         } else {
-            Ok(ToolCallResult {
+            Ok(OperationCallResult {
                 content: vec![serde_json::json!({"type": "text", "text": stderr}).to_string()],
                 is_error: true,
             })
@@ -74,12 +78,12 @@ async fn run_command(command: &str, input: &str) -> std::io::Result<std::process
     child.wait_with_output().await
 }
 
-fn build_tool_descriptor(name: &str, def: &CliToolDef) -> ToolDescriptor {
+fn build_tool_descriptor(name: &str, def: &CliOperationDef) -> OperationDescriptor {
     let description = def
         .description
         .clone()
         .unwrap_or_else(|| format!("Execute: {}", def.command));
-    ToolDescriptor {
+    OperationDescriptor {
         name: name.to_string(),
         description: Some(description),
         schema: r#"{"type":"object"}"#.to_string(),
@@ -91,15 +95,15 @@ fn build_tool_descriptor(name: &str, def: &CliToolDef) -> ToolDescriptor {
 mod tests {
     use super::*;
 
-    fn tool_def(command: &str, description: Option<&str>) -> CliToolDef {
-        CliToolDef {
+    fn tool_def(command: &str, description: Option<&str>) -> CliOperationDef {
+        CliOperationDef {
             command: command.to_string(),
             description: description.map(|s| s.to_string()),
         }
     }
 
-    fn call_request(name: &str, args: Option<&str>) -> ToolCallRequest {
-        ToolCallRequest {
+    fn call_request(name: &str, args: Option<&str>) -> OperationCallRequest {
+        OperationCallRequest {
             name: name.to_string(),
             arguments: args.map(|s| s.to_string()),
         }
@@ -108,7 +112,7 @@ mod tests {
     #[test]
     fn new_empty_runner() {
         let runner = ProcessCliRunner::new(BTreeMap::new());
-        assert!(runner.list_tools().is_empty());
+        assert!(runner.list_operations().is_empty());
     }
 
     #[test]
@@ -116,13 +120,13 @@ mod tests {
         let mut tools = BTreeMap::new();
         tools.insert("my-tool".to_string(), tool_def("echo", None));
         let runner = ProcessCliRunner::new(tools);
-        assert!(runner.has_tool("my-tool"));
+        assert!(runner.has_operation("my-tool"));
     }
 
     #[test]
     fn has_tool_returns_false_for_missing() {
         let runner = ProcessCliRunner::new(BTreeMap::new());
-        assert!(!runner.has_tool("nope"));
+        assert!(!runner.has_operation("nope"));
     }
 
     #[test]
@@ -131,7 +135,7 @@ mod tests {
         tools.insert("alpha".to_string(), tool_def("echo", Some("Echo tool")));
         tools.insert("beta".to_string(), tool_def("cat", None));
         let runner = ProcessCliRunner::new(tools);
-        let listed = runner.list_tools();
+        let listed = runner.list_operations();
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].name, "alpha");
         assert_eq!(listed[1].name, "beta");
@@ -142,7 +146,7 @@ mod tests {
         let mut tools = BTreeMap::new();
         tools.insert("t".to_string(), tool_def("git", None));
         let runner = ProcessCliRunner::new(tools);
-        let listed = runner.list_tools();
+        let listed = runner.list_operations();
         let desc = listed[0].description.as_deref().unwrap();
         assert!(desc.contains("git"));
     }
@@ -152,7 +156,7 @@ mod tests {
         let mut tools = BTreeMap::new();
         tools.insert("t".to_string(), tool_def("git", Some("Show git status")));
         let runner = ProcessCliRunner::new(tools);
-        let listed = runner.list_tools();
+        let listed = runner.list_operations();
         assert_eq!(listed[0].description.as_deref(), Some("Show git status"));
     }
 
@@ -172,7 +176,7 @@ mod tests {
         tools.insert("cat-tool".to_string(), tool_def("cat", None));
         let runner = ProcessCliRunner::new(tools);
         let request = call_request("cat-tool", Some(r#"{"key":"value"}"#));
-        let result = runner.call_tool(&request).await.unwrap();
+        let result = runner.call_operation(&request).await.unwrap();
         let content: serde_json::Value = serde_json::from_str(&result.content[0]).unwrap();
         let text = content["text"].as_str().unwrap();
         assert!(text.contains("key"));
@@ -186,7 +190,7 @@ mod tests {
         tools.insert("false-test".to_string(), tool_def("false", None));
         let runner = ProcessCliRunner::new(tools);
         let request = call_request("false-test", None);
-        let result = runner.call_tool(&request).await.unwrap();
+        let result = runner.call_operation(&request).await.unwrap();
         assert!(result.is_error);
     }
 
@@ -196,7 +200,7 @@ mod tests {
         tools.insert("sh-fail".to_string(), tool_def("sh", None));
         let runner = ProcessCliRunner::new(tools);
         let request = call_request("sh-fail", None);
-        let result = runner.call_tool(&request).await.unwrap();
+        let result = runner.call_operation(&request).await.unwrap();
         assert!(result.is_error);
     }
 
@@ -204,7 +208,7 @@ mod tests {
     async fn call_tool_unknown_returns_error() {
         let runner = ProcessCliRunner::new(BTreeMap::new());
         let request = call_request("nope", None);
-        let result = runner.call_tool(&request).await;
+        let result = runner.call_operation(&request).await;
         assert!(result.is_err());
     }
 
@@ -217,7 +221,7 @@ mod tests {
         );
         let runner = ProcessCliRunner::new(tools);
         let request = call_request("bad-cmd", None);
-        let result = runner.call_tool(&request).await;
+        let result = runner.call_operation(&request).await;
         assert!(result.is_err());
     }
 

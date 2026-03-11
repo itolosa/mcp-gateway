@@ -6,15 +6,15 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler};
 
 use crate::hexagon::ports::{
-    CliToolRunner, GatewayError, ToolCallRequest, ToolFilter, UpstreamClient,
+    CliOperationRunner, GatewayError, OperationCallRequest, OperationPolicy, ProviderClient,
 };
 use crate::hexagon::usecases::gateway::Gateway;
 
-pub struct McpAdapter<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> {
+pub struct McpAdapter<U: ProviderClient, C: CliOperationRunner, F: OperationPolicy> {
     gateway: Gateway<U, C, F>,
 }
 
-impl<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> McpAdapter<U, C, F> {
+impl<U: ProviderClient, C: CliOperationRunner, F: OperationPolicy> McpAdapter<U, C, F> {
     pub fn new(gateway: Gateway<U, C, F>) -> Self {
         Self { gateway }
     }
@@ -22,9 +22,11 @@ impl<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> McpAdapter<U, C, F> {
 
 fn gateway_error_to_mcp(err: GatewayError) -> ErrorData {
     match err {
-        GatewayError::NoPrefix { .. }
-        | GatewayError::UnknownServer { .. }
-        | GatewayError::ToolNotAllowed { .. } => ErrorData::invalid_params(err.to_string(), None),
+        GatewayError::InvalidMapping { .. }
+        | GatewayError::UnknownProvider { .. }
+        | GatewayError::OperationNotAllowed { .. } => {
+            ErrorData::invalid_params(err.to_string(), None)
+        }
         _ => ErrorData::internal_error(err.to_string(), None),
     }
 }
@@ -36,8 +38,11 @@ fn domain_content_to_mcp(content: Vec<String>) -> Vec<Content> {
         .collect()
 }
 
-impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static, F: ToolFilter + 'static> ServerHandler
-    for McpAdapter<U, C, F>
+impl<
+        U: ProviderClient + 'static,
+        C: CliOperationRunner + 'static,
+        F: OperationPolicy + 'static,
+    > ServerHandler for McpAdapter<U, C, F>
 {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
@@ -58,7 +63,7 @@ impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static, F: ToolFilter + 's
     ) -> Result<ListToolsResult, ErrorData> {
         let tools = self
             .gateway
-            .list_tools()
+            .list_operations()
             .await
             .map_err(gateway_error_to_mcp)?;
         let mcp_tools = tools
@@ -81,7 +86,7 @@ impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static, F: ToolFilter + 's
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let domain_request = ToolCallRequest {
+        let domain_request = OperationCallRequest {
             name: request.name.to_string(),
             arguments: request
                 .arguments
@@ -89,7 +94,7 @@ impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static, F: ToolFilter + 's
         };
         let result = self
             .gateway
-            .call_tool(domain_request)
+            .route_operation(domain_request)
             .await
             .map_err(gateway_error_to_mcp)?;
         let content = domain_content_to_mcp(result.content);
@@ -107,42 +112,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_prefix_maps_to_invalid_params() {
-        let err = gateway_error_to_mcp(GatewayError::NoPrefix {
-            tool: "t".to_string(),
+    fn invalid_mapping_maps_to_invalid_params() {
+        let err = gateway_error_to_mcp(GatewayError::InvalidMapping {
+            operation: "t".to_string(),
         });
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
         assert!(err.message.contains("prefix"));
     }
 
     #[test]
-    fn unknown_server_maps_to_invalid_params() {
-        let err = gateway_error_to_mcp(GatewayError::UnknownServer {
-            server: "s".to_string(),
-            tool: "t".to_string(),
+    fn unknown_provider_maps_to_invalid_params() {
+        let err = gateway_error_to_mcp(GatewayError::UnknownProvider {
+            provider: "s".to_string(),
+            operation: "t".to_string(),
         });
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("unknown server"));
+        assert!(err.message.contains("unknown provider"));
     }
 
     #[test]
-    fn tool_not_allowed_maps_to_invalid_params() {
-        let err = gateway_error_to_mcp(GatewayError::ToolNotAllowed {
-            tool: "t".to_string(),
+    fn operation_not_allowed_maps_to_invalid_params() {
+        let err = gateway_error_to_mcp(GatewayError::OperationNotAllowed {
+            operation: "t".to_string(),
         });
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
         assert!(err.message.contains("not allowed"));
     }
 
     #[test]
-    fn upstream_error_maps_to_internal_error() {
-        let err = gateway_error_to_mcp(GatewayError::Upstream("fail".to_string()));
+    fn provider_error_maps_to_internal_error() {
+        let err = gateway_error_to_mcp(GatewayError::Provider("fail".to_string()));
         assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
     }
 
     #[test]
-    fn cli_tool_error_maps_to_internal_error() {
-        let err = gateway_error_to_mcp(GatewayError::CliTool("fail".to_string()));
+    fn cli_operation_error_maps_to_internal_error() {
+        let err = gateway_error_to_mcp(GatewayError::CliOperation("fail".to_string()));
         assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
     }
 

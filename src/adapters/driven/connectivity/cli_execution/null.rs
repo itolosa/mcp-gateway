@@ -1,22 +1,26 @@
 use crate::hexagon::ports::{
-    CliToolRunner, GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor,
+    CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
+    OperationDescriptor,
 };
 
 /// No-op CLI runner for when no CLI tools are configured.
 pub struct NullCliRunner;
 
-impl CliToolRunner for NullCliRunner {
-    fn list_tools(&self) -> Vec<ToolDescriptor> {
+impl CliOperationRunner for NullCliRunner {
+    fn list_operations(&self) -> Vec<OperationDescriptor> {
         vec![]
     }
 
-    fn has_tool(&self, _name: &str) -> bool {
+    fn has_operation(&self, _name: &str) -> bool {
         false
     }
 
-    async fn call_tool(&self, request: &ToolCallRequest) -> Result<ToolCallResult, GatewayError> {
-        Err(GatewayError::CliTool(format!(
-            "unknown tool: {}",
+    async fn call_operation(
+        &self,
+        request: &OperationCallRequest,
+    ) -> Result<OperationCallResult, GatewayError> {
+        Err(GatewayError::CliOperation(format!(
+            "unknown operation: {}",
             request.name
         )))
     }
@@ -29,21 +33,21 @@ mod tests {
 
     #[test]
     fn list_tools_returns_empty() {
-        assert!(NullCliRunner.list_tools().is_empty());
+        assert!(NullCliRunner.list_operations().is_empty());
     }
 
     #[test]
     fn has_tool_returns_false() {
-        assert!(!NullCliRunner.has_tool("anything"));
+        assert!(!NullCliRunner.has_operation("anything"));
     }
 
     #[tokio::test]
     async fn call_tool_returns_error() {
-        let request = ToolCallRequest {
+        let request = OperationCallRequest {
             name: "test".to_string(),
             arguments: None,
         };
-        let result = NullCliRunner.call_tool(&request).await;
+        let result = NullCliRunner.call_operation(&request).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("test"));
     }

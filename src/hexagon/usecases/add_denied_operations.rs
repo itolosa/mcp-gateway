@@ -1,10 +1,10 @@
-use crate::hexagon::ports::{ServerConfigStore, ServerEntry};
+use crate::hexagon::ports::{ProviderConfigStore, ProviderEntry};
 use crate::hexagon::usecases::registry_error::RegistryError;
 
-pub(crate) struct AddDeniedTools;
+pub(crate) struct AddDeniedOperations;
 
-impl AddDeniedTools {
-    pub(crate) fn execute<S: ServerConfigStore>(
+impl AddDeniedOperations {
+    pub(crate) fn execute<S: ProviderConfigStore>(
         store: &S,
         name: &str,
         tools: &[String],
@@ -15,7 +15,7 @@ impl AddDeniedTools {
             .ok_or_else(|| RegistryError::NotFound {
                 name: name.to_string(),
             })?;
-        let denied = entry.denied_tools_mut();
+        let denied = entry.denied_operations_mut();
         for tool in tools {
             if !denied.contains(tool) {
                 denied.push(tool.clone());
@@ -31,11 +31,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::adapters::driven::configuration::model::{McpServerEntry, StdioConfig};
-    use crate::hexagon::usecases::get_denied_tools::GetDeniedTools;
+    use crate::hexagon::usecases::get_denied_operations::GetDeniedOperations;
     use crate::hexagon::usecases::registry_error::RegistryError;
     use crate::hexagon::usecases::registry_service::test_helpers::*;
 
-    use super::AddDeniedTools;
+    use super::AddDeniedOperations;
 
     #[test]
     fn add_denied_tools_appends_new_tools() {
@@ -43,9 +43,10 @@ mod tests {
         entries.insert("s1".to_string(), stdio_entry());
         let store = FakeConfigStore::new(entries);
 
-        AddDeniedTools::execute(&store, "s1", &["delete".to_string(), "exec".to_string()]).unwrap();
+        AddDeniedOperations::execute(&store, "s1", &["delete".to_string(), "exec".to_string()])
+            .unwrap();
 
-        let tools = GetDeniedTools::execute(&store, "s1").unwrap();
+        let tools = GetDeniedOperations::execute(&store, "s1").unwrap();
         assert_eq!(tools, vec!["delete", "exec"]);
     }
 
@@ -58,15 +59,16 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec!["delete".to_string()],
+                allowed_operations: vec![],
+                denied_operations: vec!["delete".to_string()],
             }),
         );
         let store = FakeConfigStore::new(entries);
 
-        AddDeniedTools::execute(&store, "s1", &["delete".to_string(), "exec".to_string()]).unwrap();
+        AddDeniedOperations::execute(&store, "s1", &["delete".to_string(), "exec".to_string()])
+            .unwrap();
 
-        let tools = GetDeniedTools::execute(&store, "s1").unwrap();
+        let tools = GetDeniedOperations::execute(&store, "s1").unwrap();
         assert_eq!(tools, vec!["delete", "exec"]);
     }
 
@@ -74,7 +76,7 @@ mod tests {
     fn add_denied_tools_not_found() {
         let store = FakeConfigStore::new(BTreeMap::new());
 
-        let result = AddDeniedTools::execute(&store, "nope", &["delete".to_string()]);
+        let result = AddDeniedOperations::execute(&store, "nope", &["delete".to_string()]);
         assert!(matches!(
             result,
             Err(RegistryError::NotFound { name }) if name == "nope"
@@ -87,7 +89,7 @@ mod tests {
             fail_load: true,
             entries: BTreeMap::new(),
         };
-        let result = AddDeniedTools::execute(&store, "s1", &["delete".to_string()]);
+        let result = AddDeniedOperations::execute(&store, "s1", &["delete".to_string()]);
         assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
@@ -99,7 +101,7 @@ mod tests {
             fail_load: false,
             entries,
         };
-        let result = AddDeniedTools::execute(&store, "s1", &["delete".to_string()]);
+        let result = AddDeniedOperations::execute(&store, "s1", &["delete".to_string()]);
         assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 }

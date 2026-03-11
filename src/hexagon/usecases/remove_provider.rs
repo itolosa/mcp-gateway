@@ -1,10 +1,10 @@
-use crate::hexagon::ports::ServerConfigStore;
+use crate::hexagon::ports::ProviderConfigStore;
 use crate::hexagon::usecases::registry_error::RegistryError;
 
-pub(crate) struct RemoveServer;
+pub(crate) struct RemoveProvider;
 
-impl RemoveServer {
-    pub(crate) fn execute<S: ServerConfigStore>(
+impl RemoveProvider {
+    pub(crate) fn execute<S: ProviderConfigStore>(
         store: &S,
         name: &str,
     ) -> Result<(), RegistryError> {
@@ -25,11 +25,11 @@ impl RemoveServer {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::hexagon::ports::ServerConfigStore;
+    use crate::hexagon::ports::ProviderConfigStore;
     use crate::hexagon::usecases::registry_error::RegistryError;
     use crate::hexagon::usecases::registry_service::test_helpers::*;
 
-    use super::RemoveServer;
+    use super::RemoveProvider;
 
     #[test]
     fn remove_existing_server_succeeds() {
@@ -37,7 +37,7 @@ mod tests {
         entries.insert("s1".to_string(), stdio_entry());
         let store = FakeConfigStore::new(entries);
 
-        RemoveServer::execute(&store, "s1").unwrap();
+        RemoveProvider::execute(&store, "s1").unwrap();
 
         let entries = store.load_entries().unwrap();
         assert!(!entries.contains_key("s1"));
@@ -47,7 +47,7 @@ mod tests {
     fn remove_nonexistent_server_returns_not_found() {
         let store = FakeConfigStore::new(BTreeMap::new());
 
-        let result = RemoveServer::execute(&store, "nope");
+        let result = RemoveProvider::execute(&store, "nope");
         assert!(matches!(
             result,
             Err(RegistryError::NotFound { name }) if name == "nope"
@@ -60,7 +60,7 @@ mod tests {
             fail_load: true,
             entries: BTreeMap::new(),
         };
-        let result = RemoveServer::execute(&store, "test");
+        let result = RemoveProvider::execute(&store, "test");
         assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
@@ -72,7 +72,7 @@ mod tests {
             fail_load: false,
             entries,
         };
-        let result = RemoveServer::execute(&store, "test");
+        let result = RemoveProvider::execute(&store, "test");
         assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 }

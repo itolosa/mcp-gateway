@@ -1,19 +1,19 @@
-use crate::hexagon::ports::ToolFilter;
+use crate::hexagon::ports::OperationPolicy;
 
-pub struct CompoundFilter<A: ToolFilter, D: ToolFilter> {
+pub struct CompoundPolicy<A: OperationPolicy, D: OperationPolicy> {
     allow: A,
     deny: D,
 }
 
-impl<A: ToolFilter, D: ToolFilter> CompoundFilter<A, D> {
+impl<A: OperationPolicy, D: OperationPolicy> CompoundPolicy<A, D> {
     pub fn new(allow: A, deny: D) -> Self {
         Self { allow, deny }
     }
 }
 
-impl<A: ToolFilter, D: ToolFilter> ToolFilter for CompoundFilter<A, D> {
-    fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        self.allow.is_tool_allowed(tool_name) && self.deny.is_tool_allowed(tool_name)
+impl<A: OperationPolicy, D: OperationPolicy> OperationPolicy for CompoundPolicy<A, D> {
+    fn is_allowed(&self, tool_name: &str) -> bool {
+        self.allow.is_allowed(tool_name) && self.deny.is_allowed(tool_name)
     }
 }
 
@@ -21,51 +21,51 @@ impl<A: ToolFilter, D: ToolFilter> ToolFilter for CompoundFilter<A, D> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::hexagon::entities::policy::allowlist::AllowlistFilter;
-    use crate::hexagon::entities::policy::denylist::DenylistFilter;
+    use crate::hexagon::entities::policy::allowlist::AllowlistPolicy;
+    use crate::hexagon::entities::policy::denylist::DenylistPolicy;
 
     #[test]
     fn both_empty_allows_all() {
-        let filter = CompoundFilter::new(AllowlistFilter::new(vec![]), DenylistFilter::new(vec![]));
-        assert!(filter.is_tool_allowed("anything"));
+        let filter = CompoundPolicy::new(AllowlistPolicy::new(vec![]), DenylistPolicy::new(vec![]));
+        assert!(filter.is_allowed("anything"));
     }
 
     #[test]
     fn allowlist_only_filters() {
-        let filter = CompoundFilter::new(
-            AllowlistFilter::new(vec!["read".to_string()]),
-            DenylistFilter::new(vec![]),
+        let filter = CompoundPolicy::new(
+            AllowlistPolicy::new(vec!["read".to_string()]),
+            DenylistPolicy::new(vec![]),
         );
-        assert!(filter.is_tool_allowed("read"));
-        assert!(!filter.is_tool_allowed("write"));
+        assert!(filter.is_allowed("read"));
+        assert!(!filter.is_allowed("write"));
     }
 
     #[test]
     fn denylist_only_filters() {
-        let filter = CompoundFilter::new(
-            AllowlistFilter::new(vec![]),
-            DenylistFilter::new(vec!["write".to_string()]),
+        let filter = CompoundPolicy::new(
+            AllowlistPolicy::new(vec![]),
+            DenylistPolicy::new(vec!["write".to_string()]),
         );
-        assert!(filter.is_tool_allowed("read"));
-        assert!(!filter.is_tool_allowed("write"));
+        assert!(filter.is_allowed("read"));
+        assert!(!filter.is_allowed("write"));
     }
 
     #[test]
     fn denylist_takes_precedence_over_allowlist() {
-        let filter = CompoundFilter::new(
-            AllowlistFilter::new(vec!["read".to_string(), "write".to_string()]),
-            DenylistFilter::new(vec!["write".to_string()]),
+        let filter = CompoundPolicy::new(
+            AllowlistPolicy::new(vec!["read".to_string(), "write".to_string()]),
+            DenylistPolicy::new(vec!["write".to_string()]),
         );
-        assert!(filter.is_tool_allowed("read"));
-        assert!(!filter.is_tool_allowed("write"));
+        assert!(filter.is_allowed("read"));
+        assert!(!filter.is_allowed("write"));
     }
 
     #[test]
     fn denied_tool_blocked_even_if_allowed() {
-        let filter = CompoundFilter::new(
-            AllowlistFilter::new(vec!["dangerous".to_string()]),
-            DenylistFilter::new(vec!["dangerous".to_string()]),
+        let filter = CompoundPolicy::new(
+            AllowlistPolicy::new(vec!["dangerous".to_string()]),
+            DenylistPolicy::new(vec!["dangerous".to_string()]),
         );
-        assert!(!filter.is_tool_allowed("dangerous"));
+        assert!(!filter.is_allowed("dangerous"));
     }
 }

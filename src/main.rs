@@ -15,7 +15,7 @@ use mcp_gateway::adapters::driven::connectivity::mcp_protocol::error::ProxyError
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::proxy::{
     serve_proxy, serve_proxy_http,
 };
-use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, RmcpUpstreamClient};
+use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, RmcpProviderClient};
 use mcp_gateway::adapters::driven::storage::{ConfigStore, FileConfigStore};
 use mcp_gateway::adapters::driving::execution::process::log_broadcast::BroadcastLayer;
 use mcp_gateway::adapters::driving::execution::process::pid;
@@ -26,12 +26,12 @@ use mcp_gateway::adapters::driving::ui::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
     run_denylist_remove, run_denylist_show, run_list, run_remove, run_run,
 };
-use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistFilter;
-use mcp_gateway::hexagon::entities::policy::compound::CompoundFilter;
-use mcp_gateway::hexagon::entities::policy::denylist::DenylistFilter;
-use mcp_gateway::hexagon::entities::policy::DefaultFilter;
-use mcp_gateway::hexagon::ports::ServerConfigStore;
-use mcp_gateway::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
+use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistPolicy;
+use mcp_gateway::hexagon::entities::policy::compound::CompoundPolicy;
+use mcp_gateway::hexagon::entities::policy::denylist::DenylistPolicy;
+use mcp_gateway::hexagon::entities::policy::DefaultPolicy;
+use mcp_gateway::hexagon::ports::ProviderConfigStore;
+use mcp_gateway::hexagon::usecases::gateway::{Gateway, ProviderHandle};
 use mcp_gateway::hexagon::usecases::registry_service::RegistryService;
 
 #[tokio::main]
@@ -61,7 +61,7 @@ async fn main() {
     }
 }
 
-async fn dispatch_command<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
+async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     command: Option<Command>,
     registry: &RegistryService<S>,
     config_path: &std::path::Path,
@@ -102,7 +102,7 @@ async fn dispatch_command<S: ServerConfigStore<Entry = McpServerEntry> + ConfigS
     }
 }
 
-fn dispatch_allowlist<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
+fn dispatch_allowlist<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     action: AllowlistAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -115,7 +115,7 @@ fn dispatch_allowlist<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore
     }
 }
 
-fn dispatch_denylist<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
+fn dispatch_denylist<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     action: DenylistAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -128,7 +128,7 @@ fn dispatch_denylist<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>
     }
 }
 
-async fn dispatch_start<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
+async fn dispatch_start<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     config_path: &std::path::Path,
     args: mcp_gateway::adapters::driving::ui::command::StartArgs,
@@ -183,15 +183,15 @@ fn print_error_and_exit(message: &str) {
     std::process::exit(1);
 }
 
-async fn run_gateway<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
+async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     transport: DownstreamTransport,
     port: u16,
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
-    let has_cli_tools = !gateway_config.cli_tools.is_empty();
-    let cli_tools = gateway_config.cli_tools;
+    let has_cli_tools = !gateway_config.cli_operations.is_empty();
+    let cli_tools = gateway_config.cli_operations;
     run_run(registry, |servers| async move {
         let upstreams = build_upstreams(servers).await?;
         if has_cli_tools {
@@ -226,19 +226,19 @@ async fn run_gateway<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>
 
 async fn build_upstreams(
     servers: BTreeMap<String, McpServerEntry>,
-) -> Result<BTreeMap<String, UpstreamEntry<RmcpUpstreamClient, DefaultFilter>>, ProxyError> {
+) -> Result<BTreeMap<String, ProviderHandle<RmcpProviderClient, DefaultPolicy>>, ProxyError> {
     let mut upstreams = BTreeMap::new();
     for (name, entry) in servers {
-        let filter = CompoundFilter::new(
-            AllowlistFilter::new(entry.allowed_tools().to_vec()),
-            DenylistFilter::new(entry.denied_tools().to_vec()),
+        let filter = CompoundPolicy::new(
+            AllowlistPolicy::new(entry.allowed_operations().to_vec()),
+            DenylistPolicy::new(entry.denied_operations().to_vec()),
         );
         match connect_upstream(&name, entry).await {
             Ok(service) => {
                 upstreams.insert(
                     name,
-                    UpstreamEntry {
-                        client: RmcpUpstreamClient::new(service),
+                    ProviderHandle {
+                        client: RmcpProviderClient::new(service),
                         filter,
                     },
                 );
@@ -251,14 +251,14 @@ async fn build_upstreams(
     Ok(upstreams)
 }
 
-async fn run_foreground_daemon<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
+async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     port: u16,
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
-    let has_cli_tools = !gateway_config.cli_tools.is_empty();
-    let cli_tools = gateway_config.cli_tools;
+    let has_cli_tools = !gateway_config.cli_operations.is_empty();
+    let cli_tools = gateway_config.cli_operations;
     run_run(registry, |servers| async move {
         let upstreams = build_upstreams(servers).await?;
         let ct = CancellationToken::new();
@@ -376,7 +376,7 @@ fn spawn_daemon_process(
         })
 }
 
-async fn dispatch_oauth<S: ServerConfigStore<Entry = McpServerEntry> + ConfigStore>(
+async fn dispatch_oauth<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     args: mcp_gateway::adapters::driving::ui::command::OAuthArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {

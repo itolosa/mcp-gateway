@@ -1,40 +1,40 @@
 use std::collections::BTreeMap;
 
 use crate::hexagon::ports::{
-    CliToolRunner, GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor, ToolFilter,
-    UpstreamClient,
+    CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
+    OperationDescriptor, OperationPolicy, ProviderClient,
 };
 
-use super::call_tool::CallTool;
-use super::list_tools::ListTools;
+use super::list_operations::ListOperations;
+use super::route_operation::RouteOperation;
 
-pub struct UpstreamEntry<U, F> {
+pub struct ProviderHandle<U, F> {
     pub client: U,
     pub filter: F,
 }
 
 pub struct Gateway<U, C, F> {
-    upstreams: BTreeMap<String, UpstreamEntry<U, F>>,
+    providers: BTreeMap<String, ProviderHandle<U, F>>,
     cli_runner: C,
 }
 
-impl<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> Gateway<U, C, F> {
-    pub fn new(upstreams: BTreeMap<String, UpstreamEntry<U, F>>, cli_runner: C) -> Self {
+impl<U: ProviderClient, C: CliOperationRunner, F: OperationPolicy> Gateway<U, C, F> {
+    pub fn new(providers: BTreeMap<String, ProviderHandle<U, F>>, cli_runner: C) -> Self {
         Self {
-            upstreams,
+            providers,
             cli_runner,
         }
     }
 
-    pub async fn list_tools(&self) -> Result<Vec<ToolDescriptor>, GatewayError> {
-        ListTools::execute(&self.upstreams, &self.cli_runner).await
+    pub async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, GatewayError> {
+        ListOperations::execute(&self.providers, &self.cli_runner).await
     }
 
-    pub async fn call_tool(
+    pub async fn route_operation(
         &self,
-        request: ToolCallRequest,
-    ) -> Result<ToolCallResult, GatewayError> {
-        CallTool::execute(&self.upstreams, &self.cli_runner, request).await
+        request: OperationCallRequest,
+    ) -> Result<OperationCallResult, GatewayError> {
+        RouteOperation::execute(&self.providers, &self.cli_runner, request).await
     }
 }
 
@@ -43,21 +43,21 @@ impl<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> Gateway<U, C, F> {
 pub(crate) mod test_helpers {
     use std::collections::BTreeMap;
 
-    use crate::hexagon::entities::policy::allowlist::AllowlistFilter;
-    use crate::hexagon::entities::policy::compound::CompoundFilter;
-    use crate::hexagon::entities::policy::denylist::DenylistFilter;
+    use crate::hexagon::entities::policy::allowlist::AllowlistPolicy;
+    use crate::hexagon::entities::policy::compound::CompoundPolicy;
+    use crate::hexagon::entities::policy::denylist::DenylistPolicy;
     use crate::hexagon::ports::{
-        CliToolRunner, GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor,
-        UpstreamClient, UpstreamError,
+        CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
+        OperationDescriptor, ProviderClient, ProviderError,
     };
 
-    use super::UpstreamEntry;
+    use super::ProviderHandle;
 
     pub(crate) struct MockServerA;
 
-    impl UpstreamClient for MockServerA {
-        async fn list_tools(&self) -> Result<Vec<ToolDescriptor>, UpstreamError> {
-            Ok(vec![ToolDescriptor {
+    impl ProviderClient for MockServerA {
+        async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, ProviderError> {
+            Ok(vec![OperationDescriptor {
                 name: "echo".to_string(),
                 description: Some("echoes input".to_string()),
                 schema: r#"{"type":"object","properties":{"message":{"type":"string"}}}"#
@@ -65,18 +65,18 @@ pub(crate) mod test_helpers {
             }])
         }
 
-        async fn call_tool(
+        async fn call_operation(
             &self,
-            request: ToolCallRequest,
-        ) -> Result<ToolCallResult, UpstreamError> {
+            request: OperationCallRequest,
+        ) -> Result<OperationCallResult, ProviderError> {
             if request.name == "echo" {
                 let input = request.arguments.unwrap_or_default();
-                Ok(ToolCallResult {
+                Ok(OperationCallResult {
                     content: vec![input],
                     is_error: false,
                 })
             } else {
-                Err(UpstreamError::Service(format!(
+                Err(ProviderError::Service(format!(
                     "unknown tool: {}",
                     request.name
                 )))
@@ -86,27 +86,27 @@ pub(crate) mod test_helpers {
 
     pub(crate) struct MockServerB;
 
-    impl UpstreamClient for MockServerB {
-        async fn list_tools(&self) -> Result<Vec<ToolDescriptor>, UpstreamError> {
-            Ok(vec![ToolDescriptor {
+    impl ProviderClient for MockServerB {
+        async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, ProviderError> {
+            Ok(vec![OperationDescriptor {
                 name: "read_file".to_string(),
                 description: Some("reads a file".to_string()),
                 schema: r#"{"type":"object","properties":{"path":{"type":"string"}}}"#.to_string(),
             }])
         }
 
-        async fn call_tool(
+        async fn call_operation(
             &self,
-            request: ToolCallRequest,
-        ) -> Result<ToolCallResult, UpstreamError> {
+            request: OperationCallRequest,
+        ) -> Result<OperationCallResult, ProviderError> {
             if request.name == "read_file" {
                 let args = request.arguments.unwrap_or_default();
-                Ok(ToolCallResult {
+                Ok(OperationCallResult {
                     content: vec![format!("content from {args}")],
                     is_error: false,
                 })
             } else {
-                Err(UpstreamError::Service(format!(
+                Err(ProviderError::Service(format!(
                     "unknown tool: {}",
                     request.name
                 )))
@@ -118,77 +118,77 @@ pub(crate) mod test_helpers {
         pub(crate) server_name: &'static str,
     }
 
-    impl UpstreamClient for DualMockServer {
-        async fn list_tools(&self) -> Result<Vec<ToolDescriptor>, UpstreamError> {
+    impl ProviderClient for DualMockServer {
+        async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, ProviderError> {
             if self.server_name == "alpha" {
-                MockServerA.list_tools().await
+                MockServerA.list_operations().await
             } else {
-                MockServerB.list_tools().await
+                MockServerB.list_operations().await
             }
         }
 
-        async fn call_tool(
+        async fn call_operation(
             &self,
-            request: ToolCallRequest,
-        ) -> Result<ToolCallResult, UpstreamError> {
+            request: OperationCallRequest,
+        ) -> Result<OperationCallResult, ProviderError> {
             if self.server_name == "alpha" {
-                MockServerA.call_tool(request).await
+                MockServerA.call_operation(request).await
             } else {
-                MockServerB.call_tool(request).await
+                MockServerB.call_operation(request).await
             }
         }
     }
 
-    pub(crate) fn passthrough_filter() -> CompoundFilter<AllowlistFilter, DenylistFilter> {
-        CompoundFilter::new(AllowlistFilter::new(vec![]), DenylistFilter::new(vec![]))
+    pub(crate) fn passthrough_filter() -> CompoundPolicy<AllowlistPolicy, DenylistPolicy> {
+        CompoundPolicy::new(AllowlistPolicy::new(vec![]), DenylistPolicy::new(vec![]))
     }
 
-    pub(crate) type TestFilter = CompoundFilter<AllowlistFilter, DenylistFilter>;
+    pub(crate) type TestFilter = CompoundPolicy<AllowlistPolicy, DenylistPolicy>;
 
-    pub(crate) fn two_server_setup() -> BTreeMap<String, UpstreamEntry<DualMockServer, TestFilter>>
+    pub(crate) fn two_server_setup() -> BTreeMap<String, ProviderHandle<DualMockServer, TestFilter>>
     {
-        let mut upstreams = BTreeMap::new();
-        upstreams.insert(
+        let mut providers = BTreeMap::new();
+        providers.insert(
             "alpha".to_string(),
-            UpstreamEntry {
+            ProviderHandle {
                 client: DualMockServer {
                     server_name: "alpha",
                 },
                 filter: passthrough_filter(),
             },
         );
-        upstreams.insert(
+        providers.insert(
             "beta".to_string(),
-            UpstreamEntry {
+            ProviderHandle {
                 client: DualMockServer {
                     server_name: "beta",
                 },
                 filter: passthrough_filter(),
             },
         );
-        upstreams
+        providers
     }
 
     pub(crate) struct MockCliRunner;
 
-    impl CliToolRunner for MockCliRunner {
-        fn list_tools(&self) -> Vec<ToolDescriptor> {
-            vec![ToolDescriptor {
+    impl CliOperationRunner for MockCliRunner {
+        fn list_operations(&self) -> Vec<OperationDescriptor> {
+            vec![OperationDescriptor {
                 name: "cli-cat".to_string(),
                 description: Some("Cat stdin to stdout".to_string()),
                 schema: r#"{"type":"object"}"#.to_string(),
             }]
         }
 
-        fn has_tool(&self, name: &str) -> bool {
+        fn has_operation(&self, name: &str) -> bool {
             name == "cli-cat"
         }
 
-        async fn call_tool(
+        async fn call_operation(
             &self,
-            _request: &ToolCallRequest,
-        ) -> Result<ToolCallResult, GatewayError> {
-            Ok(ToolCallResult {
+            _request: &OperationCallRequest,
+        ) -> Result<OperationCallResult, GatewayError> {
+            Ok(OperationCallResult {
                 content: vec!["cli-cat output".to_string()],
                 is_error: false,
             })
@@ -197,16 +197,16 @@ pub(crate) mod test_helpers {
 
     pub(crate) struct FailingUpstream;
 
-    impl UpstreamClient for FailingUpstream {
-        async fn list_tools(&self) -> Result<Vec<ToolDescriptor>, UpstreamError> {
-            Err(UpstreamError::Service("connection closed".to_string()))
+    impl ProviderClient for FailingUpstream {
+        async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, ProviderError> {
+            Err(ProviderError::Service("connection closed".to_string()))
         }
 
-        async fn call_tool(
+        async fn call_operation(
             &self,
-            _request: ToolCallRequest,
-        ) -> Result<ToolCallResult, UpstreamError> {
-            Err(UpstreamError::Service("connection closed".to_string()))
+            _request: OperationCallRequest,
+        ) -> Result<OperationCallResult, ProviderError> {
+            Err(ProviderError::Service("connection closed".to_string()))
         }
     }
 
@@ -215,21 +215,21 @@ pub(crate) mod test_helpers {
         Failing(FailingUpstream),
     }
 
-    impl UpstreamClient for TestUpstream {
-        async fn list_tools(&self) -> Result<Vec<ToolDescriptor>, UpstreamError> {
+    impl ProviderClient for TestUpstream {
+        async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, ProviderError> {
             match self {
-                TestUpstream::Fast(s) => s.list_tools().await,
-                TestUpstream::Failing(s) => s.list_tools().await,
+                TestUpstream::Fast(s) => s.list_operations().await,
+                TestUpstream::Failing(s) => s.list_operations().await,
             }
         }
 
-        async fn call_tool(
+        async fn call_operation(
             &self,
-            request: ToolCallRequest,
-        ) -> Result<ToolCallResult, UpstreamError> {
+            request: OperationCallRequest,
+        ) -> Result<OperationCallResult, ProviderError> {
             match self {
-                TestUpstream::Fast(s) => s.call_tool(request).await,
-                TestUpstream::Failing(s) => s.call_tool(request).await,
+                TestUpstream::Fast(s) => s.call_operation(request).await,
+                TestUpstream::Failing(s) => s.call_operation(request).await,
             }
         }
     }

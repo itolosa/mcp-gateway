@@ -167,8 +167,8 @@ mod tests {
     use crate::adapters::driven::configuration::model::HttpConfig;
     use crate::adapters::driven::connectivity::cli_execution::NullCliRunner;
     use crate::adapters::driven::connectivity::mcp_protocol::McpAdapter;
-    use crate::adapters::driven::connectivity::mcp_protocol::RmcpUpstreamClient;
-    use crate::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
+    use crate::adapters::driven::connectivity::mcp_protocol::RmcpProviderClient;
+    use crate::hexagon::usecases::gateway::{Gateway, ProviderHandle};
     use rmcp::model::*;
     use rmcp::ServerHandler;
     use std::collections::BTreeMap;
@@ -179,8 +179,8 @@ mod tests {
             command: "/nonexistent/path/to/binary".to_string(),
             args: vec![],
             env: BTreeMap::new(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
         };
         let result = spawn_transport(&config);
         assert!(matches!(result, Err(ProxyError::UpstreamSpawn { .. })));
@@ -194,8 +194,8 @@ mod tests {
                 ("Authorization".to_string(), "Bearer token123".to_string()),
                 ("X-Custom".to_string(), "value".to_string()),
             ]),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: None,
         };
         let result = create_http_transport(&config);
@@ -207,8 +207,8 @@ mod tests {
         let config = HttpConfig {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::new(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: None,
         };
         let result = create_http_transport(&config);
@@ -220,8 +220,8 @@ mod tests {
         let config = HttpConfig {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::from([("bad\nname".to_string(), "value".to_string())]),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: None,
         };
         let result = create_http_transport(&config);
@@ -233,8 +233,8 @@ mod tests {
         let config = HttpConfig {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::from([("X-Custom".to_string(), "bad\nvalue".to_string())]),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: None,
         };
         let result = create_http_transport(&config);
@@ -247,8 +247,8 @@ mod tests {
             command: "cat".to_string(),
             args: vec!["--help".to_string()],
             env: BTreeMap::from([("MY_VAR".to_string(), "value".to_string())]),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
         };
         let result = spawn_transport(&config);
         assert!(result.is_ok());
@@ -274,24 +274,24 @@ mod tests {
         }
     }
 
-    use crate::hexagon::entities::policy::allowlist::AllowlistFilter;
-    use crate::hexagon::entities::policy::compound::CompoundFilter;
-    use crate::hexagon::entities::policy::denylist::DenylistFilter;
+    use crate::hexagon::entities::policy::allowlist::AllowlistPolicy;
+    use crate::hexagon::entities::policy::compound::CompoundPolicy;
+    use crate::hexagon::entities::policy::denylist::DenylistPolicy;
 
-    type TestFilter = CompoundFilter<AllowlistFilter, DenylistFilter>;
+    type TestFilter = CompoundPolicy<AllowlistPolicy, DenylistPolicy>;
 
     fn passthrough_filter() -> TestFilter {
-        CompoundFilter::new(AllowlistFilter::new(vec![]), DenylistFilter::new(vec![]))
+        CompoundPolicy::new(AllowlistPolicy::new(vec![]), DenylistPolicy::new(vec![]))
     }
 
-    fn empty_adapter() -> Arc<McpAdapter<RmcpUpstreamClient, NullCliRunner, TestFilter>> {
+    fn empty_adapter() -> Arc<McpAdapter<RmcpProviderClient, NullCliRunner, TestFilter>> {
         let gateway = Gateway::new(BTreeMap::new(), NullCliRunner);
         Arc::new(McpAdapter::new(gateway))
     }
 
     fn adapter_with_upstreams(
-        upstreams: BTreeMap<String, UpstreamEntry<RmcpUpstreamClient, TestFilter>>,
-    ) -> Arc<McpAdapter<RmcpUpstreamClient, NullCliRunner, TestFilter>> {
+        upstreams: BTreeMap<String, ProviderHandle<RmcpProviderClient, TestFilter>>,
+    ) -> Arc<McpAdapter<RmcpProviderClient, NullCliRunner, TestFilter>> {
         let gateway = Gateway::new(upstreams, NullCliRunner);
         Arc::new(McpAdapter::new(gateway))
     }
@@ -313,8 +313,8 @@ mod tests {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "test".to_string(),
-            UpstreamEntry {
-                client: RmcpUpstreamClient::new(upstream),
+            ProviderHandle {
+                client: RmcpProviderClient::new(upstream),
                 filter: passthrough_filter(),
             },
         );
@@ -341,8 +341,8 @@ mod tests {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "test".to_string(),
-            UpstreamEntry {
-                client: RmcpUpstreamClient::new(upstream),
+            ProviderHandle {
+                client: RmcpProviderClient::new(upstream),
                 filter: passthrough_filter(),
             },
         );
@@ -379,8 +379,8 @@ mod tests {
         let config = HttpConfig {
             url: "not a valid url".to_string(),
             headers: BTreeMap::new(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: None,
         };
         let result = create_oauth_http_transport(&config, "test").await;
@@ -392,8 +392,8 @@ mod tests {
         let config = HttpConfig {
             url: "not a valid url".to_string(),
             headers: BTreeMap::new(),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: Some(crate::adapters::driven::configuration::model::OAuthConfig {
                 client_id: None,
                 client_secret: None,
@@ -414,8 +414,8 @@ mod tests {
                 ("Authorization".to_string(), "Bearer token".to_string()),
                 ("X-Custom".to_string(), "value".to_string()),
             ]),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: Some(crate::adapters::driven::configuration::model::OAuthConfig {
                 client_id: None,
                 client_secret: None,
@@ -440,8 +440,8 @@ mod tests {
         let config = HttpConfig {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::from([("X-Custom".to_string(), "bad\nvalue".to_string())]),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: Some(crate::adapters::driven::configuration::model::OAuthConfig {
                 client_id: None,
                 client_secret: None,
@@ -459,8 +459,8 @@ mod tests {
         let config = HttpConfig {
             url: "http://localhost:8080/mcp".to_string(),
             headers: BTreeMap::from([("bad\nname".to_string(), "value".to_string())]),
-            allowed_tools: vec![],
-            denied_tools: vec![],
+            allowed_operations: vec![],
+            denied_operations: vec![],
             auth: Some(crate::adapters::driven::configuration::model::OAuthConfig {
                 client_id: None,
                 client_secret: None,
