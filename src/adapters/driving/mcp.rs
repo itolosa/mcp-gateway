@@ -8,7 +8,7 @@ use rmcp::{ErrorData, ServerHandler};
 use crate::hexagon::ports::{
     CliToolRunner, GatewayError, ToolCallRequest, ToolFilter, UpstreamClient,
 };
-use crate::hexagon::usecases::Gateway;
+use crate::hexagon::usecases::gateway::Gateway;
 
 pub struct McpAdapter<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> {
     gateway: Gateway<U, C, F>,
@@ -29,10 +29,10 @@ fn gateway_error_to_mcp(err: GatewayError) -> ErrorData {
     }
 }
 
-fn domain_content_to_mcp(content: Vec<serde_json::Value>) -> Vec<Content> {
+fn domain_content_to_mcp(content: Vec<String>) -> Vec<Content> {
     content
         .into_iter()
-        .filter_map(|v| serde_json::from_value(v).ok())
+        .filter_map(|s| serde_json::from_str(&s).ok())
         .collect()
 }
 
@@ -63,7 +63,11 @@ impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static, F: ToolFilter + 's
             .map_err(gateway_error_to_mcp)?;
         let mcp_tools = tools
             .into_iter()
-            .map(|t| Tool::new(t.name, t.description.unwrap_or_default(), t.schema))
+            .map(|t| {
+                let schema: serde_json::Map<String, serde_json::Value> =
+                    serde_json::from_str(&t.schema).unwrap_or_default();
+                Tool::new(t.name, t.description.unwrap_or_default(), schema)
+            })
             .collect();
         Ok(ListToolsResult {
             tools: mcp_tools,
@@ -79,7 +83,9 @@ impl<U: UpstreamClient + 'static, C: CliToolRunner + 'static, F: ToolFilter + 's
     ) -> Result<CallToolResult, ErrorData> {
         let domain_request = ToolCallRequest {
             name: request.name.to_string(),
-            arguments: request.arguments,
+            arguments: request
+                .arguments
+                .map(|m| serde_json::to_string(&m).unwrap_or_default()),
         };
         let result = self
             .gateway
@@ -135,15 +141,6 @@ mod tests {
     }
 
     #[test]
-    fn upstream_timeout_maps_to_internal_error() {
-        let err = gateway_error_to_mcp(GatewayError::UpstreamTimeout {
-            server: "s".to_string(),
-            timeout_secs: 5,
-        });
-        assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
-    }
-
-    #[test]
     fn cli_tool_error_maps_to_internal_error() {
         let err = gateway_error_to_mcp(GatewayError::CliTool("fail".to_string()));
         assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
@@ -151,14 +148,14 @@ mod tests {
 
     #[test]
     fn domain_content_to_mcp_converts_valid_content() {
-        let content = vec![serde_json::json!({"type": "text", "text": "hello"})];
+        let content = vec![r#"{"type":"text","text":"hello"}"#.to_string()];
         let result = domain_content_to_mcp(content);
         assert_eq!(result.len(), 1);
     }
 
     #[test]
     fn domain_content_to_mcp_skips_invalid_content() {
-        let content = vec![serde_json::json!({"invalid": true})];
+        let content = vec![r#"{"invalid":true}"#.to_string()];
         let result = domain_content_to_mcp(content);
         assert!(result.is_empty());
     }

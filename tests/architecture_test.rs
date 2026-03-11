@@ -5,7 +5,7 @@ use std::path::Path;
 
 const HEXAGON_DIR: &str = "src/hexagon";
 
-const ALLOWED_PREFIXES: &[&str] = &[
+const ALLOWED_USE_PREFIXES: &[&str] = &[
     "std::",
     "core::",
     "alloc::",
@@ -42,12 +42,12 @@ fn collect_violations(path: &Path) -> Vec<String> {
             .next()
             .unwrap_or("");
 
-        let allowed = ALLOWED_PREFIXES
+        let allowed = ALLOWED_USE_PREFIXES
             .iter()
             .any(|prefix| import_path.starts_with(prefix.trim_end_matches(':')));
 
         if !allowed {
-            violations.push(format!("{}:{}: {}", path.display(), line_num + 1, trimmed,));
+            violations.push(format!("{}:{}: {}", path.display(), line_num + 1, trimmed));
         }
     }
 
@@ -133,6 +133,45 @@ fn outside_hexagon_must_only_import_ports_and_usecases() {
     assert!(
         violations.is_empty(),
         "Hexagon encapsulation violated — code outside the hexagon may only import from hexagon::ports and hexagon::usecases:\n\n{}",
+        violations.join("\n"),
+    );
+}
+
+fn collect_reexport_violations(path: &Path) -> Vec<String> {
+    let content = fs::read_to_string(path).unwrap();
+    let test_start = cfg_test_line(&content).unwrap_or(usize::MAX);
+    let mut violations = Vec::new();
+
+    for (line_num, line) in content.lines().enumerate() {
+        if line_num >= test_start {
+            break;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.starts_with("pub use ") {
+            violations.push(format!("{}:{}: {}", path.display(), line_num + 1, trimmed));
+        }
+    }
+
+    violations
+}
+
+#[test]
+fn hexagon_must_not_contain_reexports() {
+    let hexagon_path = Path::new(HEXAGON_DIR);
+    assert!(hexagon_path.exists(), "hexagon directory not found");
+
+    let mut violations = Vec::new();
+
+    for entry in walkdir(hexagon_path) {
+        if entry.extension().is_some_and(|e| e == "rs") {
+            violations.extend(collect_reexport_violations(&entry));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Hexagon must not contain pub use re-exports — define types where they belong:\n\n{}",
         violations.join("\n"),
     );
 }

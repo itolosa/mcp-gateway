@@ -36,9 +36,9 @@ impl CliToolRunner for ProcessCliRunner {
             .get(name.as_str())
             .ok_or_else(|| GatewayError::CliTool(format!("unknown CLI tool: {name}")))?;
 
-        let input_json = serde_json::to_string(request).unwrap_or_default();
+        let input_json = request.arguments.as_deref().unwrap_or("{}");
 
-        let output = run_command(&def.command, &input_json)
+        let output = run_command(&def.command, input_json)
             .await
             .map_err(|e| GatewayError::CliTool(format!("failed to run '{}': {e}", def.command)))?;
 
@@ -46,9 +46,15 @@ impl CliToolRunner for ProcessCliRunner {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if output.status.success() {
-            Ok(ToolCallResult::text_success(stdout))
+            Ok(ToolCallResult {
+                content: vec![serde_json::json!({"type": "text", "text": stdout}).to_string()],
+                is_error: false,
+            })
         } else {
-            Ok(ToolCallResult::text_error(stderr))
+            Ok(ToolCallResult {
+                content: vec![serde_json::json!({"type": "text", "text": stderr}).to_string()],
+                is_error: true,
+            })
         }
     }
 }
@@ -73,15 +79,10 @@ fn build_tool_descriptor(name: &str, def: &CliToolDef) -> ToolDescriptor {
         .description
         .clone()
         .unwrap_or_else(|| format!("Execute: {}", def.command));
-    let mut schema = serde_json::Map::new();
-    schema.insert(
-        "type".to_string(),
-        serde_json::Value::String("object".to_string()),
-    );
     ToolDescriptor {
         name: name.to_string(),
         description: Some(description),
-        schema,
+        schema: r#"{"type":"object"}"#.to_string(),
     }
 }
 
@@ -97,13 +98,10 @@ mod tests {
         }
     }
 
-    fn call_request(
-        name: &str,
-        args: Option<serde_json::Map<String, serde_json::Value>>,
-    ) -> ToolCallRequest {
+    fn call_request(name: &str, args: Option<&str>) -> ToolCallRequest {
         ToolCallRequest {
             name: name.to_string(),
-            arguments: args,
+            arguments: args.map(|s| s.to_string()),
         }
     }
 
@@ -162,9 +160,10 @@ mod tests {
     fn build_tool_descriptor_schema_is_open_object() {
         let def = tool_def("echo", None);
         let tool = build_tool_descriptor("test", &def);
-        assert_eq!(tool.schema.get("type").unwrap(), "object");
-        assert!(tool.schema.get("properties").is_none());
-        assert!(tool.schema.get("required").is_none());
+        let schema: serde_json::Value = serde_json::from_str(&tool.schema).unwrap();
+        assert_eq!(schema["type"], "object");
+        assert!(schema.get("properties").is_none());
+        assert!(schema.get("required").is_none());
     }
 
     #[tokio::test]
@@ -172,15 +171,10 @@ mod tests {
         let mut tools = BTreeMap::new();
         tools.insert("cat-tool".to_string(), tool_def("cat", None));
         let runner = ProcessCliRunner::new(tools);
-        let mut args = serde_json::Map::new();
-        args.insert("key".to_string(), serde_json::json!("value"));
-        let request = call_request("cat-tool", Some(args));
+        let request = call_request("cat-tool", Some(r#"{"key":"value"}"#));
         let result = runner.call_tool(&request).await.unwrap();
-        let text = result.content[0]
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert!(text.contains("cat-tool"));
+        let content: serde_json::Value = serde_json::from_str(&result.content[0]).unwrap();
+        let text = content["text"].as_str().unwrap();
         assert!(text.contains("key"));
         assert!(text.contains("value"));
         assert!(!result.is_error);

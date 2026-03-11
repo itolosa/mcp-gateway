@@ -7,7 +7,7 @@ mod proxy_stress {
     use mcp_gateway::adapters::driven::{NullCliRunner, ProcessCliRunner, RmcpUpstreamClient};
     use mcp_gateway::adapters::driving::McpAdapter;
     use mcp_gateway::config::model::CliToolDef;
-    use mcp_gateway::hexagon::usecases::{Gateway, UpstreamEntry};
+    use mcp_gateway::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
     use rmcp::model::{
         CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -161,18 +161,20 @@ mod proxy_stress {
 
         let upstream_client = ().serve(upstream_client_transport).await.unwrap();
 
+        let mut client = RmcpUpstreamClient::new(upstream_client);
+        if let Some(t) = timeout {
+            client = client.with_operation_timeout(t);
+        }
+
         let mut upstreams = BTreeMap::new();
         upstreams.insert(
             "srv".to_string(),
             UpstreamEntry {
-                client: RmcpUpstreamClient::new(upstream_client),
+                client,
                 filter: passthrough_filter(),
             },
         );
-        let mut gateway = Gateway::new(upstreams, NullCliRunner);
-        if let Some(t) = timeout {
-            gateway = gateway.with_operation_timeout(t);
-        }
+        let gateway = Gateway::new(upstreams, NullCliRunner);
         let adapter = McpAdapter::new(gateway);
 
         // downstream: proxy server <-> test client
@@ -594,10 +596,7 @@ mod proxy_stress {
                     .with_arguments(serde_json::from_value(serde_json::json!({"idx": i})).unwrap());
                 let result = c.call_tool(params).await.unwrap();
                 let text = extract_text(&result);
-                assert!(
-                    text.contains("cat-tool"),
-                    "response should contain tool name"
-                );
+                assert!(text.contains("idx"), "response should contain arguments");
                 assert!(!result.is_error.unwrap_or(false));
             });
         }

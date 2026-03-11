@@ -167,7 +167,7 @@ mod tests {
     use crate::adapters::driven::{NullCliRunner, RmcpUpstreamClient};
     use crate::adapters::driving::McpAdapter;
     use crate::config::model::HttpConfig;
-    use crate::hexagon::usecases::{Gateway, UpstreamEntry};
+    use crate::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
     use rmcp::model::*;
     use rmcp::ServerHandler;
     use std::collections::BTreeMap;

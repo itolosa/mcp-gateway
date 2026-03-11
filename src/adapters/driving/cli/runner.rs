@@ -833,7 +833,7 @@ mod tests {
     async fn e2e_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
         use crate::adapters::driven::{NullCliRunner, RmcpUpstreamClient};
         use crate::adapters::driving::McpAdapter;
-        use crate::hexagon::usecases::{Gateway, UpstreamEntry};
+        use crate::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
         use rmcp::ServiceExt;
 
         let (upstream_server_t, upstream_client_t) = tokio::io::duplex(4096);

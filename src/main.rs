@@ -28,8 +28,8 @@ use mcp_gateway::config::default_config_path;
 use mcp_gateway::config::model::McpServerEntry;
 use mcp_gateway::config::store::{ConfigStore, FileConfigStore};
 use mcp_gateway::hexagon::ports::ServerConfigStore;
+use mcp_gateway::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
 use mcp_gateway::hexagon::usecases::registry_service::RegistryService;
-use mcp_gateway::hexagon::usecases::{Gateway, UpstreamEntry};
 
 #[tokio::main]
 async fn main() {
