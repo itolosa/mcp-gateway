@@ -9,7 +9,7 @@ use rmcp::transport::StreamableHttpClientTransport;
 use super::callback::{run_callback_on_listener, CallbackParams};
 use super::credentials::FileCredentialStore;
 use super::error::OAuthError;
-use crate::config::model::OAuthConfig;
+use crate::adapters::driven::configuration::model::OAuthConfig;
 
 pub async fn create_oauth_transport(
     server_url: &str,

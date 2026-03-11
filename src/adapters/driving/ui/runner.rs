@@ -6,8 +6,8 @@ use super::command::{
     AddArgs, AllowlistModifyArgs, AllowlistShowArgs, DenylistModifyArgs, DenylistShowArgs,
     RemoveArgs, TransportType,
 };
-use crate::adapters::driving::proxy::error::ProxyError;
-use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
+use crate::adapters::driven::configuration::model::{HttpConfig, McpServerEntry, StdioConfig};
+use crate::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
 use crate::hexagon::ports::ServerConfigStore;
 use crate::hexagon::usecases::registry_error::RegistryError;
 use crate::hexagon::usecases::registry_service::RegistryService;
@@ -152,7 +152,7 @@ fn build_entry(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::config::model::GatewayConfig;
+    use crate::adapters::driven::configuration::model::GatewayConfig;
     use std::sync::Mutex;
 
     struct FakeConfigStore {
@@ -831,8 +831,9 @@ mod tests {
     }
 
     async fn e2e_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
-        use crate::adapters::driven::{NullCliRunner, RmcpUpstreamClient};
-        use crate::adapters::driving::McpAdapter;
+        use crate::adapters::driven::connectivity::cli_execution::NullCliRunner;
+        use crate::adapters::driven::connectivity::mcp_protocol::McpAdapter;
+        use crate::adapters::driven::connectivity::mcp_protocol::RmcpUpstreamClient;
         use crate::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
         use rmcp::ServiceExt;
 
@@ -851,9 +852,9 @@ mod tests {
             "test".to_string(),
             UpstreamEntry {
                 client: RmcpUpstreamClient::new(upstream),
-                filter: crate::adapters::driven::filter::CompoundFilter::new(
-                    crate::adapters::driven::filter::AllowlistFilter::new(vec![]),
-                    crate::adapters::driven::filter::DenylistFilter::new(vec![]),
+                filter: crate::hexagon::entities::policy::compound::CompoundFilter::new(
+                    crate::hexagon::entities::policy::allowlist::AllowlistFilter::new(vec![]),
+                    crate::hexagon::entities::policy::denylist::DenylistFilter::new(vec![]),
                 ),
             },
         );
@@ -867,9 +868,11 @@ mod tests {
             drop(client);
         });
 
-        let result =
-            crate::adapters::driving::proxy::runner::serve_proxy(adapter, downstream_server_t)
-                .await;
+        let result = crate::adapters::driven::connectivity::mcp_protocol::proxy::serve_proxy(
+            adapter,
+            downstream_server_t,
+        )
+        .await;
 
         let _ = upstream_handle.await;
         result

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::config::error::ConfigError;
-use crate::config::model::{GatewayConfig, McpServerEntry};
+use crate::adapters::driven::configuration::error::ConfigError;
+use crate::adapters::driven::configuration::model::{GatewayConfig, McpServerEntry};
 use crate::hexagon::ports::ServerConfigStore;
 
 pub trait ConfigStore {
@@ -205,13 +205,15 @@ mod tests {
         let mut entries = BTreeMap::new();
         entries.insert(
             "s1".to_string(),
-            crate::config::model::McpServerEntry::Stdio(crate::config::model::StdioConfig {
-                command: "echo".to_string(),
-                args: vec![],
-                env: BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec![],
-            }),
+            crate::adapters::driven::configuration::model::McpServerEntry::Stdio(
+                crate::adapters::driven::configuration::model::StdioConfig {
+                    command: "echo".to_string(),
+                    args: vec![],
+                    env: BTreeMap::new(),
+                    allowed_tools: vec![],
+                    denied_tools: vec![],
+                },
+            ),
         );
         ServerConfigStore::save_entries(&store, entries).unwrap();
 
@@ -255,13 +257,15 @@ mod tests {
         let mut config = GatewayConfig::default();
         config.mcp_servers.insert(
             "test".to_string(),
-            crate::config::model::McpServerEntry::Stdio(crate::config::model::StdioConfig {
-                command: "echo".to_string(),
-                args: vec!["hello".to_string()],
-                env: std::collections::BTreeMap::new(),
-                allowed_tools: vec![],
-                denied_tools: vec![],
-            }),
+            crate::adapters::driven::configuration::model::McpServerEntry::Stdio(
+                crate::adapters::driven::configuration::model::StdioConfig {
+                    command: "echo".to_string(),
+                    args: vec!["hello".to_string()],
+                    env: std::collections::BTreeMap::new(),
+                    allowed_tools: vec![],
+                    denied_tools: vec![],
+                },
+            ),
         );
 
         store.save(&config).unwrap();

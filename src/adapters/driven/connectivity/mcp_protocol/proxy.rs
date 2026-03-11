@@ -18,10 +18,10 @@ use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use super::error::ProxyError;
-use crate::adapters::driven::oauth;
-use crate::config::model::HttpConfig;
-use crate::config::model::OAuthConfig;
-use crate::config::model::StdioConfig;
+use crate::adapters::driven::configuration::model::HttpConfig;
+use crate::adapters::driven::configuration::model::OAuthConfig;
+use crate::adapters::driven::configuration::model::StdioConfig;
+use crate::adapters::driven::connectivity::oauth;
 
 pub async fn serve_proxy<H, T, E, A>(
     handler: Arc<H>,
@@ -164,9 +164,10 @@ pub async fn create_oauth_http_transport(
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use crate::adapters::driven::{NullCliRunner, RmcpUpstreamClient};
-    use crate::adapters::driving::McpAdapter;
-    use crate::config::model::HttpConfig;
+    use crate::adapters::driven::configuration::model::HttpConfig;
+    use crate::adapters::driven::connectivity::cli_execution::NullCliRunner;
+    use crate::adapters::driven::connectivity::mcp_protocol::McpAdapter;
+    use crate::adapters::driven::connectivity::mcp_protocol::RmcpUpstreamClient;
     use crate::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
     use rmcp::model::*;
     use rmcp::ServerHandler;
@@ -273,7 +274,9 @@ mod tests {
         }
     }
 
-    use crate::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
+    use crate::hexagon::entities::policy::allowlist::AllowlistFilter;
+    use crate::hexagon::entities::policy::compound::CompoundFilter;
+    use crate::hexagon::entities::policy::denylist::DenylistFilter;
 
     type TestFilter = CompoundFilter<AllowlistFilter, DenylistFilter>;
 
@@ -391,7 +394,7 @@ mod tests {
             headers: BTreeMap::new(),
             allowed_tools: vec![],
             denied_tools: vec![],
-            auth: Some(crate::config::model::OAuthConfig {
+            auth: Some(crate::adapters::driven::configuration::model::OAuthConfig {
                 client_id: None,
                 client_secret: None,
                 scopes: vec![],
@@ -413,7 +416,7 @@ mod tests {
             ]),
             allowed_tools: vec![],
             denied_tools: vec![],
-            auth: Some(crate::config::model::OAuthConfig {
+            auth: Some(crate::adapters::driven::configuration::model::OAuthConfig {
                 client_id: None,
                 client_secret: None,
                 scopes: vec![],
@@ -439,7 +442,7 @@ mod tests {
             headers: BTreeMap::from([("X-Custom".to_string(), "bad\nvalue".to_string())]),
             allowed_tools: vec![],
             denied_tools: vec![],
-            auth: Some(crate::config::model::OAuthConfig {
+            auth: Some(crate::adapters::driven::configuration::model::OAuthConfig {
                 client_id: None,
                 client_secret: None,
                 scopes: vec![],
@@ -458,7 +461,7 @@ mod tests {
             headers: BTreeMap::from([("bad\nname".to_string(), "value".to_string())]),
             allowed_tools: vec![],
             denied_tools: vec![],
-            auth: Some(crate::config::model::OAuthConfig {
+            auth: Some(crate::adapters::driven::configuration::model::OAuthConfig {
                 client_id: None,
                 client_secret: None,
                 scopes: vec![],

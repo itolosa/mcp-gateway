@@ -43,7 +43,9 @@ impl<U: UpstreamClient, C: CliToolRunner, F: ToolFilter> Gateway<U, C, F> {
 pub(crate) mod test_helpers {
     use std::collections::BTreeMap;
 
-    use crate::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
+    use crate::hexagon::entities::policy::allowlist::AllowlistFilter;
+    use crate::hexagon::entities::policy::compound::CompoundFilter;
+    use crate::hexagon::entities::policy::denylist::DenylistFilter;
     use crate::hexagon::ports::{
         CliToolRunner, GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor,
         UpstreamClient, UpstreamError,

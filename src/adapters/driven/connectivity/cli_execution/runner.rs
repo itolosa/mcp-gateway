@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use tokio::io::AsyncWriteExt;
 
-use crate::config::model::CliToolDef;
+use crate::adapters::driven::configuration::model::CliToolDef;
 use crate::hexagon::ports::{
     CliToolRunner, GatewayError, ToolCallRequest, ToolCallResult, ToolDescriptor,
 };

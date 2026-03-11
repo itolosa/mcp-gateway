@@ -63,8 +63,10 @@ impl CallTool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
-    use crate::adapters::driven::NullCliRunner;
+    use crate::adapters::driven::connectivity::cli_execution::NullCliRunner;
+    use crate::hexagon::entities::policy::allowlist::AllowlistFilter;
+    use crate::hexagon::entities::policy::compound::CompoundFilter;
+    use crate::hexagon::entities::policy::denylist::DenylistFilter;
     use crate::hexagon::ports::ToolCallRequest;
     use crate::hexagon::usecases::gateway::test_helpers::*;
     use crate::hexagon::usecases::gateway::UpstreamEntry;

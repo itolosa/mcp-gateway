@@ -3,10 +3,16 @@ mod proxy_stress {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
-    use mcp_gateway::adapters::driven::filter::{AllowlistFilter, CompoundFilter, DenylistFilter};
-    use mcp_gateway::adapters::driven::{NullCliRunner, ProcessCliRunner, RmcpUpstreamClient};
-    use mcp_gateway::adapters::driving::McpAdapter;
-    use mcp_gateway::config::model::CliToolDef;
+    use mcp_gateway::adapters::driven::configuration::model::CliToolDef;
+    use mcp_gateway::adapters::driven::connectivity::cli_execution::{
+        NullCliRunner, ProcessCliRunner,
+    };
+    use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{
+        McpAdapter, RmcpUpstreamClient,
+    };
+    use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistFilter;
+    use mcp_gateway::hexagon::entities::policy::compound::CompoundFilter;
+    use mcp_gateway::hexagon::entities::policy::denylist::DenylistFilter;
     use mcp_gateway::hexagon::usecases::gateway::{Gateway, UpstreamEntry};
     use rmcp::model::{
         CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, ListToolsResult,

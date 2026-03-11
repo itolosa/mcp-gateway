@@ -69,7 +69,7 @@ pub(crate) mod test_helpers {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use crate::config::model::{HttpConfig, McpServerEntry, StdioConfig};
+    use crate::adapters::driven::configuration::model::{HttpConfig, McpServerEntry, StdioConfig};
     use crate::hexagon::ports::ServerConfigStore;
 
     pub(crate) struct FakeConfigStore {

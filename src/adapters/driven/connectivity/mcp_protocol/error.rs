@@ -1,5 +1,5 @@
-use crate::adapters::driven::oauth::OAuthError;
-use crate::config::error::ConfigError;
+use crate::adapters::driven::configuration::error::ConfigError;
+use crate::adapters::driven::connectivity::oauth::OAuthError;
 use crate::hexagon::usecases::registry_error::RegistryError;
 
 #[derive(Debug, thiserror::Error)]

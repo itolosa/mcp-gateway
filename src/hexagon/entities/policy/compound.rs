@@ -21,7 +21,8 @@ impl<A: ToolFilter, D: ToolFilter> ToolFilter for CompoundFilter<A, D> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::adapters::driven::filter::{AllowlistFilter, DenylistFilter};
+    use crate::hexagon::entities::policy::allowlist::AllowlistFilter;
+    use crate::hexagon::entities::policy::denylist::DenylistFilter;
 
     #[test]
     fn both_empty_allows_all() {

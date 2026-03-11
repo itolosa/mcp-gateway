@@ -30,7 +30,7 @@ impl AddDeniedTools {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::config::model::{McpServerEntry, StdioConfig};
+    use crate::adapters::driven::configuration::model::{McpServerEntry, StdioConfig};
     use crate::hexagon::usecases::get_denied_tools::GetDeniedTools;
     use crate::hexagon::usecases::registry_error::RegistryError;
     use crate::hexagon::usecases::registry_service::test_helpers::*;

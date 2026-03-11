@@ -75,7 +75,11 @@ fn hexagon_must_not_import_outside_stdlib_and_itself() {
 }
 
 const SRC_DIR: &str = "src";
-const ALLOWED_HEXAGON_MODULES: &[&str] = &["crate::hexagon::usecases", "crate::hexagon::ports"];
+const ALLOWED_HEXAGON_MODULES: &[&str] = &[
+    "crate::hexagon::usecases",
+    "crate::hexagon::ports",
+    "crate::hexagon::entities",
+];
 
 fn collect_hexagon_access_violations(path: &Path) -> Vec<String> {
     let content = fs::read_to_string(path).unwrap();
