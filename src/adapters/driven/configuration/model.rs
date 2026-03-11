@@ -125,7 +125,7 @@ fn default_redirect_port() -> u16 {
 
 impl crate::hexagon::ports::ProviderEntry for McpServerEntry {
     fn allowed_operations(&self) -> &[String] {
-        Vec::leak(Vec::new()) /* ~ changed by cargo-mutants ~ */
+        McpServerEntry::allowed_operations(self)
     }
 
     fn allowed_operations_mut(&mut self) -> &mut Vec<String> {
