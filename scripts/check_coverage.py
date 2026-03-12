@@ -12,12 +12,18 @@ def main():
         sys.exit(2)
 
     da_total = da_zero = fnf = fnh = 0
+    current_file = None
+    uncovered = []
     for line in open(sys.argv[1]):
         line = line.strip()
-        if line.startswith("DA:"):
+        if line.startswith("SF:"):
+            current_file = line[3:]
+        elif line.startswith("DA:"):
             da_total += 1
-            if int(line[3:].split(",")[1]) == 0:
+            parts = line[3:].split(",")
+            if int(parts[1]) == 0:
                 da_zero += 1
+                uncovered.append(f"  {current_file}:{parts[0]}")
         elif line.startswith("FNF:"):
             fnf += int(line.split(":")[1])
         elif line.startswith("FNH:"):
@@ -26,6 +32,8 @@ def main():
     ok = True
     if da_zero:
         print(f"FAIL: {da_zero}/{da_total} lines uncovered")
+        for entry in uncovered:
+            print(entry)
         ok = False
     else:
         print(f"OK: 100% line coverage ({da_total} lines)")
