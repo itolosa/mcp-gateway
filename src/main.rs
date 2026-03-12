@@ -375,6 +375,15 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
                 }
             }
         };
+        // In stdio mode, downstream disconnect is a normal exit, not an error.
+        let result = if transport == DownstreamTransport::Stdio {
+            result.or_else(|e| match e {
+                ProxyError::DownstreamInit { .. } => Ok(()),
+                other => Err(other),
+            })
+        } else {
+            result
+        };
         pid::remove_instance(&run_dir, own_pid);
         result
     })
