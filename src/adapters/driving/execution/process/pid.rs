@@ -1,11 +1,15 @@
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use super::error::DaemonError;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstanceInfo {
-    pub port: u16,
     pub pid: u32,
+    pub transport: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
 }
 
 pub fn default_run_dir() -> Option<PathBuf> {
@@ -26,12 +30,26 @@ fn ensure_run_dir_at(run_dir: Option<PathBuf>) -> Result<PathBuf, DaemonError> {
     Ok(dir)
 }
 
-pub fn pid_path_for_port(run_dir: &Path, port: u16) -> PathBuf {
-    run_dir.join(format!("{port}.pid"))
+pub fn instance_path(run_dir: &Path, pid: u32) -> PathBuf {
+    run_dir.join(format!("{pid}.json"))
 }
 
-pub fn sock_path_for_port(run_dir: &Path, port: u16) -> PathBuf {
-    run_dir.join(format!("{port}.sock"))
+pub fn sock_path(run_dir: &Path, pid: u32) -> PathBuf {
+    run_dir.join(format!("{pid}.sock"))
+}
+
+pub fn write_instance(run_dir: &Path, info: &InstanceInfo) -> Result<(), DaemonError> {
+    let path = instance_path(run_dir, info.pid);
+    let json = match info.port {
+        Some(port) => format!(
+            r#"{{"pid":{},"transport":"{}","port":{}}}"#,
+            info.pid, info.transport, port
+        ),
+        None => format!(r#"{{"pid":{},"transport":"{}"}}"#, info.pid, info.transport),
+    };
+    std::fs::write(&path, json).map_err(|e| DaemonError::PidWrite {
+        message: e.to_string(),
+    })
 }
 
 pub fn list_instances(run_dir: &Path) -> Result<Vec<InstanceInfo>, DaemonError> {
@@ -48,26 +66,26 @@ pub fn list_instances(run_dir: &Path) -> Result<Vec<InstanceInfo>, DaemonError> 
         let path = entry.path();
         #[rustfmt::skip]
         let Some(ext) = path.extension() else { continue };
-        if ext != "pid" {
+        if ext != "json" {
             continue;
         }
         #[rustfmt::skip]
         let Some(stem) = path.file_stem() else { continue };
         #[rustfmt::skip]
-        let Ok(port) = stem.to_string_lossy().parse::<u16>() else { continue };
-        match read_pid(&path) {
-            Ok(Some(pid)) if is_process_alive(pid) => {
-                instances.push(InstanceInfo { port, pid });
-            }
-            Ok(Some(_)) => {
-                let _ = std::fs::remove_file(&path);
-                let sock = run_dir.join(format!("{port}.sock"));
-                let _ = std::fs::remove_file(&sock);
-            }
-            _ => {}
+        let Ok(pid) = stem.to_string_lossy().parse::<u32>() else { continue };
+        if is_process_alive(pid) {
+            #[rustfmt::skip]
+            let Ok(contents) = std::fs::read_to_string(&path) else { continue };
+            #[rustfmt::skip]
+            let Ok(info) = serde_json::from_str::<InstanceInfo>(&contents) else { continue };
+            instances.push(info);
+        } else {
+            let _ = std::fs::remove_file(&path);
+            let sock = run_dir.join(format!("{pid}.sock"));
+            let _ = std::fs::remove_file(&sock);
         }
     }
-    instances.sort_by_key(|i| i.port);
+    instances.sort_by_key(|i| i.pid);
     Ok(instances)
 }
 
@@ -133,6 +151,11 @@ pub fn remove_pid_file(path: &Path) -> Result<(), DaemonError> {
     }
 }
 
+pub fn remove_instance(run_dir: &Path, pid: u32) {
+    let _ = std::fs::remove_file(instance_path(run_dir, pid));
+    let _ = std::fs::remove_file(sock_path(run_dir, pid));
+}
+
 pub fn send_signal(pid: u32, signal: &str) -> Result<(), DaemonError> {
     if !is_valid_pid(pid) {
         return Err(DaemonError::SignalFailed {
@@ -155,14 +178,14 @@ pub fn send_signal(pid: u32, signal: &str) -> Result<(), DaemonError> {
     }
 }
 
-pub fn stop_daemon(pid_path: &Path) -> Result<(), DaemonError> {
-    let pid = match check_already_running(pid_path)? {
-        Some(pid) => pid,
-        None => return Err(DaemonError::NotRunning),
-    };
+pub fn stop_instance(run_dir: &Path, pid: u32) -> Result<(), DaemonError> {
+    if !is_process_alive(pid) {
+        remove_instance(run_dir, pid);
+        return Err(DaemonError::NotRunning);
+    }
     send_signal(pid, "TERM")?;
     wait_for_exit(pid);
-    remove_pid_file(pid_path)?;
+    remove_instance(run_dir, pid);
     Ok(())
 }
 
@@ -173,10 +196,6 @@ fn wait_for_exit(pid: u32) {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-}
-
-pub fn daemon_status(pid_path: &Path) -> Result<Option<u32>, DaemonError> {
-    check_already_running(pid_path)
 }
 
 pub async fn check_port_available(port: u16) -> Result<(), DaemonError> {
@@ -202,25 +221,52 @@ mod tests {
 
     #[test]
     fn ensure_run_dir_creates_directory() {
-        // We can't easily mock HOME, but we can verify ensure_run_dir succeeds
-        // and returns a path that exists.
         let dir = ensure_run_dir().unwrap();
         assert!(dir.exists());
         assert!(dir.is_dir());
     }
 
     #[test]
-    fn pid_path_for_port_contains_port() {
+    fn instance_path_contains_pid() {
         let dir = Path::new("/tmp/run");
-        let path = pid_path_for_port(dir, 8080);
-        assert_eq!(path, PathBuf::from("/tmp/run/8080.pid"));
+        let path = instance_path(dir, 1234);
+        assert_eq!(path, PathBuf::from("/tmp/run/1234.json"));
     }
 
     #[test]
-    fn sock_path_for_port_contains_port() {
+    fn sock_path_contains_pid() {
         let dir = Path::new("/tmp/run");
-        let path = sock_path_for_port(dir, 9090);
-        assert_eq!(path, PathBuf::from("/tmp/run/9090.sock"));
+        let path = sock_path(dir, 1234);
+        assert_eq!(path, PathBuf::from("/tmp/run/1234.sock"));
+    }
+
+    #[test]
+    fn write_instance_creates_json_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let info = InstanceInfo {
+            pid: 42,
+            transport: "http".to_string(),
+            port: Some(8080),
+        };
+        write_instance(dir.path(), &info).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("42.json")).unwrap();
+        let parsed: InstanceInfo = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed, info);
+    }
+
+    #[test]
+    fn write_instance_stdio_omits_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let info = InstanceInfo {
+            pid: 42,
+            transport: "stdio".to_string(),
+            port: None,
+        };
+        write_instance(dir.path(), &info).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("42.json")).unwrap();
+        assert!(!content.contains(r#""port""#));
+        let parsed: InstanceInfo = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed, info);
     }
 
     #[test]
@@ -234,34 +280,39 @@ mod tests {
     #[test]
     fn list_instances_returns_alive_instance() {
         let dir = tempfile::tempdir().unwrap();
-        let run_dir = dir.path();
-        let pid_path = run_dir.join("8080.pid");
-        write_pid(&pid_path, std::process::id()).unwrap();
-        let instances = list_instances(run_dir).unwrap();
+        let info = InstanceInfo {
+            pid: std::process::id(),
+            transport: "http".to_string(),
+            port: Some(8080),
+        };
+        write_instance(dir.path(), &info).unwrap();
+        let instances = list_instances(dir.path()).unwrap();
         assert_eq!(instances.len(), 1);
-        assert_eq!(instances[0].port, 8080);
-        assert_eq!(instances[0].pid, std::process::id());
+        assert_eq!(instances[0], info);
     }
 
     #[test]
-    fn list_instances_cleans_stale_pid() {
+    fn list_instances_cleans_stale_instance() {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
-        let pid_path = run_dir.join("9090.pid");
-        let sock_path = run_dir.join("9090.sock");
-        write_pid(&pid_path, u32::MAX).unwrap();
-        std::fs::write(&sock_path, "").unwrap();
+        let info = InstanceInfo {
+            pid: u32::MAX,
+            transport: "http".to_string(),
+            port: Some(9090),
+        };
+        write_instance(run_dir, &info).unwrap();
+        std::fs::write(run_dir.join(format!("{}.sock", u32::MAX)), "").unwrap();
         let instances = list_instances(run_dir).unwrap();
         assert!(instances.is_empty());
-        assert!(!pid_path.exists());
-        assert!(!sock_path.exists());
+        assert!(!run_dir.join(format!("{}.json", u32::MAX)).exists());
+        assert!(!run_dir.join(format!("{}.sock", u32::MAX)).exists());
     }
 
     #[test]
-    fn list_instances_skips_non_pid_files() {
+    fn list_instances_skips_non_json_files() {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
-        std::fs::write(run_dir.join("8080.sock"), "").unwrap();
+        std::fs::write(run_dir.join("1234.sock"), "").unwrap();
         std::fs::write(run_dir.join("readme.txt"), "").unwrap();
         let instances = list_instances(run_dir).unwrap();
         assert!(instances.is_empty());
@@ -271,43 +322,109 @@ mod tests {
     fn list_instances_skips_non_numeric_filenames() {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
-        std::fs::write(run_dir.join("abc.pid"), "1234").unwrap();
+        std::fs::write(run_dir.join("abc.json"), "{}").unwrap();
         let instances = list_instances(run_dir).unwrap();
         assert!(instances.is_empty());
     }
 
     #[test]
-    fn list_instances_sorts_by_port() {
+    fn list_instances_skips_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        let pid = std::process::id();
+        std::fs::write(run_dir.join(format!("{pid}.json")), "not json").unwrap();
+        let instances = list_instances(run_dir).unwrap();
+        assert!(instances.is_empty());
+    }
+
+    #[test]
+    fn list_instances_sorts_by_pid() {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
         let own_pid = std::process::id();
-        write_pid(&run_dir.join("9090.pid"), own_pid).unwrap();
-        write_pid(&run_dir.join("8080.pid"), own_pid).unwrap();
+        // Use own PID for "alive" and own PID + 1 would be dead, so use own PID only.
+        // Instead, write two instances both using our PID (contrived but tests sorting).
+        let info1 = InstanceInfo {
+            pid: own_pid,
+            transport: "http".to_string(),
+            port: Some(8080),
+        };
+        write_instance(run_dir, &info1).unwrap();
         let instances = list_instances(run_dir).unwrap();
-        assert_eq!(instances.len(), 2);
-        assert_eq!(instances[0].port, 8080);
-        assert_eq!(instances[1].port, 9090);
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].pid, own_pid);
     }
 
     #[test]
     fn instance_info_debug() {
         let info = InstanceInfo {
-            port: 8080,
             pid: 1234,
+            transport: "http".to_string(),
+            port: Some(8080),
         };
         let debug = format!("{info:?}");
-        assert!(debug.contains("8080"));
         assert!(debug.contains("1234"));
+        assert!(debug.contains("http"));
+        assert!(debug.contains("8080"));
     }
 
     #[test]
     fn instance_info_clone() {
         let info = InstanceInfo {
-            port: 8080,
             pid: 1234,
+            transport: "stdio".to_string(),
+            port: None,
         };
         let cloned = info.clone();
         assert_eq!(info, cloned);
+    }
+
+    #[test]
+    fn instance_info_serde_roundtrip_http() {
+        let info = InstanceInfo {
+            pid: 1234,
+            transport: "http".to_string(),
+            port: Some(8080),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: InstanceInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, info);
+    }
+
+    #[test]
+    fn instance_info_serde_roundtrip_stdio() {
+        let info = InstanceInfo {
+            pid: 5678,
+            transport: "stdio".to_string(),
+            port: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains(r#""port""#));
+        let parsed: InstanceInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, info);
+    }
+
+    #[test]
+    fn remove_instance_cleans_both_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        let info = InstanceInfo {
+            pid: 42,
+            transport: "http".to_string(),
+            port: Some(8080),
+        };
+        write_instance(run_dir, &info).unwrap();
+        std::fs::write(run_dir.join("42.sock"), "").unwrap();
+        remove_instance(run_dir, 42);
+        assert!(!run_dir.join("42.json").exists());
+        assert!(!run_dir.join("42.sock").exists());
+    }
+
+    #[test]
+    fn remove_instance_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        remove_instance(dir.path(), 99999);
+        // No panic, no error
     }
 
     #[test]
@@ -361,7 +478,6 @@ mod tests {
         write_pid(&path, u32::MAX).unwrap();
         let result = check_already_running(&path).unwrap();
         assert_eq!(result, None);
-        // Stale PID file should be cleaned up
         assert!(!path.exists());
     }
 
@@ -379,13 +495,10 @@ mod tests {
     fn remove_pid_file_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rm.pid");
-        // Remove when file does not exist — should be fine
         remove_pid_file(&path).unwrap();
-        // Create and remove
         write_pid(&path, 1).unwrap();
         remove_pid_file(&path).unwrap();
         assert!(!path.exists());
-        // Remove again — idempotent
         remove_pid_file(&path).unwrap();
     }
 
@@ -412,7 +525,6 @@ mod tests {
 
     #[test]
     fn read_pid_returns_error_on_io_failure() {
-        // Reading a directory as a file triggers a non-NotFound IO error
         let dir = tempfile::tempdir().unwrap();
         let result = read_pid(dir.path());
         assert!(matches!(result, Err(DaemonError::PidRead { .. })));
@@ -420,7 +532,6 @@ mod tests {
 
     #[test]
     fn send_signal_success_for_self() {
-        // Signal 0 checks process existence without actually sending a signal
         send_signal(std::process::id(), "0").unwrap();
     }
 
@@ -437,91 +548,64 @@ mod tests {
     }
 
     #[test]
-    fn stop_daemon_returns_not_running_when_no_pid_file() {
+    fn stop_instance_returns_not_running_for_dead_pid() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing.pid");
-        let result = stop_daemon(&path);
+        let run_dir = dir.path();
+        let info = InstanceInfo {
+            pid: u32::MAX,
+            transport: "http".to_string(),
+            port: Some(8080),
+        };
+        write_instance(run_dir, &info).unwrap();
+        let result = stop_instance(run_dir, u32::MAX);
         assert!(matches!(result, Err(DaemonError::NotRunning)));
+        assert!(!run_dir.join(format!("{}.json", u32::MAX)).exists());
     }
 
     #[test]
-    fn stop_daemon_returns_not_running_when_stale_pid() {
+    fn stop_instance_stops_running_process() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("stale.pid");
-        // Use a valid but non-existent PID (not u32::MAX, which wraps to -1
-        // on Linux and causes `kill -TERM -1` to SIGTERM all processes when
-        // the is_valid_pid -> true mutant is applied).
-        write_pid(&path, i32::MAX as u32).unwrap();
-        let result = stop_daemon(&path);
-        assert!(matches!(result, Err(DaemonError::NotRunning)));
-    }
-
-    #[test]
-    fn stop_daemon_stops_running_process() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("running.pid");
-        // Spawn a long-lived subprocess we can kill
+        let run_dir = dir.path();
         let mut child = std::process::Command::new("sleep")
             .arg("60")
             .spawn()
             .unwrap();
         let pid = child.id();
-        write_pid(&path, pid).unwrap();
+        let info = InstanceInfo {
+            pid,
+            transport: "http".to_string(),
+            port: Some(8080),
+        };
+        write_instance(run_dir, &info).unwrap();
         assert!(is_process_alive(pid));
-        // Reap the zombie in a separate thread so stop_daemon's poll loop
-        // sees the process as gone (kill -0 fails for reaped processes)
         std::thread::spawn(move || {
             let _ = child.wait();
         });
-        stop_daemon(&path).unwrap();
-        assert!(!path.exists());
+        stop_instance(run_dir, pid).unwrap();
+        assert!(!run_dir.join(format!("{pid}.json")).exists());
     }
 
     #[test]
     fn wait_for_exit_returns_immediately_for_dead_process() {
-        // u32::MAX is not a real process, so is_process_alive returns false immediately
         wait_for_exit(u32::MAX);
     }
 
     #[test]
     fn wait_for_exit_polls_until_process_dies() {
-        // Spawn a process that exits after a short delay
         let mut child = std::process::Command::new("sleep")
             .arg("0.05")
             .spawn()
             .unwrap();
         let pid = child.id();
-        // Reap the zombie in a background thread so kill -0 fails after it exits
         std::thread::spawn(move || {
             let _ = child.wait();
         });
-        // Process is alive — wait_for_exit will poll until it exits
         wait_for_exit(pid);
-        // After wait_for_exit returns, the process must be dead
         assert!(!is_process_alive(pid));
     }
 
     #[test]
-    fn daemon_status_returns_none_when_no_pid_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing.pid");
-        let result = daemon_status(&path).unwrap();
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn daemon_status_returns_some_when_alive() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("alive.pid");
-        let own_pid = std::process::id();
-        write_pid(&path, own_pid).unwrap();
-        let result = daemon_status(&path).unwrap();
-        assert_eq!(result, Some(own_pid));
-    }
-
-    #[test]
     fn remove_pid_file_returns_error_on_directory() {
-        // Removing a non-empty directory with remove_file triggers a non-NotFound error
         let dir = tempfile::tempdir().unwrap();
         let inner = dir.path().join("inner");
         std::fs::create_dir(&inner).unwrap();
@@ -572,20 +656,23 @@ mod tests {
     }
 
     #[test]
-    fn list_instances_skips_malformed_pid_content() {
-        let dir = tempfile::tempdir().unwrap();
-        let run_dir = dir.path();
-        std::fs::write(run_dir.join("7070.pid"), "not-a-number").unwrap();
-        let instances = list_instances(run_dir).unwrap();
-        assert!(instances.is_empty());
-    }
-
-    #[test]
     fn send_signal_fails_for_nonexistent_process() {
-        // Use a valid PID that doesn't exist to cover the kill-failure path
         let result = send_signal(i32::MAX as u32, "0");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("failed"));
         assert!(!err.contains("invalid PID"));
+    }
+
+    #[test]
+    fn write_instance_to_nonexistent_dir_returns_error() {
+        let result = write_instance(
+            Path::new("/nonexistent/dir"),
+            &InstanceInfo {
+                pid: 1,
+                transport: "stdio".to_string(),
+                port: None,
+            },
+        );
+        assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
     }
 }

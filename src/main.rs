@@ -147,7 +147,7 @@ fn resolve_instance(
         (_, []) => Err(DaemonError::NotRunning),
         (Some(p), _) => instances
             .iter()
-            .find(|i| i.port == p)
+            .find(|i| i.port == Some(p))
             .cloned()
             .ok_or(DaemonError::NotRunning),
         (None, [single]) => Ok(single.clone()),
@@ -160,7 +160,11 @@ fn prompt_select_instance(
 ) -> Result<pid::InstanceInfo, DaemonError> {
     eprintln!("Multiple instances running:");
     for (i, instance) in instances.iter().enumerate() {
-        eprintln!("  {}) port {} (PID {})", i + 1, instance.port, instance.pid);
+        let label = match instance.port {
+            Some(p) => format!("{} port {}", instance.transport, p),
+            None => instance.transport.clone(),
+        };
+        eprintln!("  {}) {} (PID {})", i + 1, label, instance.pid);
     }
     eprint!("Select instance [1-{}]: ", instances.len());
     let mut input = String::new();
@@ -208,11 +212,11 @@ fn dispatch_stop(port_arg: Option<u16>) -> Result<(), DaemonError> {
     let run_dir = pid::default_run_dir().unwrap_or_default();
     let instances = pid::list_instances(&run_dir)?;
     let instance = resolve_instance(port_arg, &instances)?;
-    let pid_path = pid::pid_path_for_port(&run_dir, instance.port);
-    pid::stop_daemon(&pid_path)?;
-    let sock_path = pid::sock_path_for_port(&run_dir, instance.port);
-    status_socket::remove_sock_file(&sock_path);
-    tracing::info!("gateway on port {} stopped", instance.port);
+    pid::stop_instance(&run_dir, instance.pid)?;
+    match instance.port {
+        Some(p) => tracing::info!("gateway on port {p} stopped"),
+        None => tracing::info!("gateway (PID {}) stopped", instance.pid),
+    }
     Ok(())
 }
 
@@ -224,8 +228,12 @@ async fn dispatch_status(port_arg: Option<u16>) -> Result<(), DaemonError> {
         return Ok(());
     }
     let instance = resolve_instance(port_arg, &instances)?;
-    tracing::info!("gateway on port {} (PID {})", instance.port, instance.pid);
-    let sock_path = pid::sock_path_for_port(&run_dir, instance.port);
+    let label = match instance.port {
+        Some(p) => format!("{} port {p}", instance.transport),
+        None => instance.transport.clone(),
+    };
+    tracing::info!("{label} (PID {})", instance.pid);
+    let sock_path = pid::sock_path(&run_dir, instance.pid);
     match status_socket::query_status(&sock_path).await {
         Ok(report) => {
             if report.providers.is_empty() {
@@ -255,20 +263,25 @@ async fn dispatch_status(port_arg: Option<u16>) -> Result<(), DaemonError> {
 }
 
 fn dispatch_restart(config_path: &std::path::Path, port: u16) -> Result<(), DaemonError> {
-    let run_dir = pid::ensure_run_dir()?;
-    let pid_path = pid::pid_path_for_port(&run_dir, port);
-    match pid::stop_daemon(&pid_path) {
-        Ok(()) | Err(DaemonError::NotRunning) => {}
-        Err(e) => return Err(e),
+    let run_dir = pid::default_run_dir().unwrap_or_default();
+    // Find existing instance on this port and stop it
+    let instances = pid::list_instances(&run_dir)?;
+    if let Some(existing) = instances.iter().find(|i| i.port == Some(port)) {
+        let _ = pid::stop_instance(&run_dir, existing.pid);
     }
-    let sock_path = pid::sock_path_for_port(&run_dir, port);
-    status_socket::remove_sock_file(&sock_path);
     start_daemon(config_path, port)
 }
 
 fn print_error_and_exit(message: &str) {
     tracing::error!("{message}");
     std::process::exit(1);
+}
+
+fn transport_label(transport: &DownstreamTransport) -> &'static str {
+    match transport {
+        DownstreamTransport::Stdio => "stdio",
+        DownstreamTransport::Http => "http",
+    }
 }
 
 async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
@@ -278,46 +291,38 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
-    if gateway_config.single_instance && transport == DownstreamTransport::Http {
+    if gateway_config.single_instance {
         let run_dir = pid::default_run_dir().unwrap_or_default();
         let instances = pid::list_instances(&run_dir).unwrap_or_default();
         if let Some(first) = instances.first() {
             return Err(ProxyError::UpstreamInit {
-                message: format!(
-                    "single-instance mode: already running on port {} (PID {})",
-                    first.port, first.pid
-                ),
+                message: format!("single-instance mode: already running (PID {})", first.pid),
             });
         }
     }
     let has_cli_tools = !gateway_config.cli_operations.is_empty();
     let cli_tools = gateway_config.cli_operations;
+    let transport_str = transport_label(&transport).to_string();
     let is_http = transport == DownstreamTransport::Http;
     run_run(registry, |servers| async move {
         let (upstreams, statuses) = build_upstreams(servers).await?;
         let report = GatewayStatusReport {
             providers: statuses,
         };
-        let mut cleanup_pid: Option<std::path::PathBuf> = None;
-        let mut cleanup_sock: Option<std::path::PathBuf> = None;
-        let _status_handle = if is_http {
-            let run_dir = pid::ensure_run_dir().map_err(|e| ProxyError::UpstreamInit {
-                message: e.to_string(),
-            })?;
-            let pid_path = pid::pid_path_for_port(&run_dir, port);
-            let sock_path = pid::sock_path_for_port(&run_dir, port);
-            pid::write_pid(&pid_path, std::process::id()).map_err(|e| {
-                ProxyError::UpstreamInit {
-                    message: e.to_string(),
-                }
-            })?;
-            let handle = status_socket::start_status_listener(sock_path.clone(), report);
-            cleanup_pid = Some(pid_path);
-            cleanup_sock = Some(sock_path);
-            handle
-        } else {
-            None
+        let run_dir = pid::ensure_run_dir().map_err(|e| ProxyError::UpstreamInit {
+            message: e.to_string(),
+        })?;
+        let own_pid = std::process::id();
+        let instance_info = pid::InstanceInfo {
+            pid: own_pid,
+            transport: transport_str,
+            port: if is_http { Some(port) } else { None },
         };
+        pid::write_instance(&run_dir, &instance_info).map_err(|e| ProxyError::UpstreamInit {
+            message: e.to_string(),
+        })?;
+        let sock_path = pid::sock_path(&run_dir, own_pid);
+        let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
         let result = if has_cli_tools {
             let cli_runner = ProcessCliRunner::new(cli_tools);
             let gateway = Gateway::new(upstreams, cli_runner);
@@ -344,12 +349,7 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
                 }
             }
         };
-        if let Some(p) = cleanup_pid {
-            let _ = pid::remove_pid_file(&p);
-        }
-        if let Some(s) = cleanup_sock {
-            status_socket::remove_sock_file(&s);
-        }
+        pid::remove_instance(&run_dir, own_pid);
         result
     })
     .await
@@ -427,7 +427,8 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
         let run_dir = pid::ensure_run_dir().map_err(|e| ProxyError::UpstreamInit {
             message: e.to_string(),
         })?;
-        let sock_path = pid::sock_path_for_port(&run_dir, port);
+        let own_pid = std::process::id();
+        let sock_path = pid::sock_path(&run_dir, own_pid);
         let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
         let ct = CancellationToken::new();
         let ct_signal = ct.clone();
@@ -462,7 +463,10 @@ async fn run_attach(port_override: Option<u16>) -> Result<(), DaemonError> {
         None => {
             let run_dir = pid::default_run_dir().unwrap_or_default();
             let instances = pid::list_instances(&run_dir)?;
-            resolve_instance(None, &instances)?.port
+            let instance = resolve_instance(None, &instances)?;
+            instance.port.ok_or_else(|| DaemonError::AttachFailed {
+                message: "selected instance has no port (stdio transport)".to_string(),
+            })?
         }
     };
     mcp_gateway::adapters::driving::execution::process::attach::attach(port, &mut std::io::stdout())
@@ -471,13 +475,19 @@ async fn run_attach(port_override: Option<u16>) -> Result<(), DaemonError> {
 
 fn start_daemon(config_path: &std::path::Path, port: u16) -> Result<(), DaemonError> {
     let run_dir = pid::ensure_run_dir()?;
-    let pid_path = pid::pid_path_for_port(&run_dir, port);
-    if let Some(existing_pid) = pid::check_already_running(&pid_path)? {
-        return Err(DaemonError::AlreadyRunning { pid: existing_pid });
+    // Check if any existing instance already uses this port
+    let instances = pid::list_instances(&run_dir)?;
+    if let Some(existing) = instances.iter().find(|i| i.port == Some(port)) {
+        return Err(DaemonError::AlreadyRunning { pid: existing.pid });
     }
     check_port_available(port)?;
     let child = spawn_daemon_process(config_path, port)?;
-    pid::write_pid(&pid_path, child.id())?;
+    let info = pid::InstanceInfo {
+        pid: child.id(),
+        transport: "http".to_string(),
+        port: Some(port),
+    };
+    pid::write_instance(&run_dir, &info)?;
     tracing::info!("gateway started on port {port} (PID {})", child.id());
     Ok(())
 }
@@ -493,7 +503,6 @@ fn spawn_daemon_process(
     config_path: &std::path::Path,
     port: u16,
 ) -> Result<std::process::Child, DaemonError> {
-    // Use argv[0] to locate our own executable for re-exec
     let exe = std::env::args_os()
         .next()
         .map(std::path::PathBuf::from)

@@ -1,7 +1,6 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use predicates::str::contains;
-use std::io::Write;
 
 #[test]
 fn no_args_succeeds() {
@@ -706,10 +705,9 @@ fn status_when_stale_pid_prints_no_instances() {
     let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
     let run_dir = dir.path().join(".mcp-gateway").join("run");
     std::fs::create_dir_all(&run_dir).unwrap_or_else(|_| unreachable!());
-    let pid_path = run_dir.join("8080.pid");
-    let mut file = std::fs::File::create(&pid_path).unwrap_or_else(|_| unreachable!());
-    write!(file, "{}", u32::MAX).unwrap_or_else(|_| unreachable!());
-    drop(file);
+    let instance_path = run_dir.join(format!("{}.json", u32::MAX));
+    let json = format!(r#"{{"pid":{},"transport":"http","port":8080}}"#, u32::MAX);
+    std::fs::write(&instance_path, json).unwrap_or_else(|_| unreachable!());
 
     cargo_bin_cmd!()
         .env("HOME", dir.path())
