@@ -21,6 +21,9 @@ pub enum DaemonError {
     #[error("attach failed: {message}")]
     AttachFailed { message: String },
 
+    #[error("log read failed: {message}")]
+    LogRead { message: String },
+
     #[error("{0}")]
     UserInput(String),
 }
@@ -83,6 +86,15 @@ mod tests {
         };
         assert!(err.to_string().contains("connection refused"));
         assert!(err.to_string().contains("attach"));
+    }
+
+    #[test]
+    fn log_read_display() {
+        let err = DaemonError::LogRead {
+            message: "file not found".to_string(),
+        };
+        assert!(err.to_string().contains("file not found"));
+        assert!(err.to_string().contains("log read"));
     }
 
     #[test]

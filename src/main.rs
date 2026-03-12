@@ -19,6 +19,7 @@ use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, Rmcp
 use mcp_gateway::adapters::driven::storage::{ConfigStore, FileConfigStore};
 use mcp_gateway::adapters::driving::execution::process::error::DaemonError;
 use mcp_gateway::adapters::driving::execution::process::log_broadcast::BroadcastLayer;
+use mcp_gateway::adapters::driving::execution::process::log_file;
 use mcp_gateway::adapters::driving::execution::process::pid;
 use mcp_gateway::adapters::driving::execution::process::status_socket::{
     self, GatewayStatusReport, ProviderStatus,
@@ -117,6 +118,7 @@ async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + Confi
             dispatch_restart(config_path, args.port).map_err(|e| e.to_string())
         }
         Some(Command::Attach(args)) => run_attach(args.port).await.map_err(|e| e.to_string()),
+        Some(Command::Logs(args)) => dispatch_logs(args).await.map_err(|e| e.to_string()),
         Some(Command::Oauth(args)) => dispatch_oauth(registry, args)
             .await
             .map_err(|e| e.to_string()),
@@ -338,6 +340,8 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
             message: e.to_string(),
         })?;
         let sock_path = pid::sock_path(&run_dir, own_pid);
+        let log_path = pid::log_path(&run_dir, own_pid);
+        let _log_handle = log_file::spawn_log_writer(log_path, &log_sender);
         let initializing_report = GatewayStatusReport {
             state: "Initializing".to_string(),
             providers: vec![],
@@ -411,7 +415,7 @@ async fn build_upstreams(
     let mut statuses = Vec::new();
     let total = servers.len();
     if total > 0 {
-        eprintln!("Connecting to {total} servers...");
+        tracing::info!("Connecting to {total} servers...");
     }
     for (name, entry) in servers {
         let (provider_type, target) = describe_server_entry(&entry);
@@ -436,7 +440,7 @@ async fn build_upstreams(
                         filter,
                     },
                 );
-                eprintln!("  \u{2714} {name} ({provider_type})");
+                tracing::info!("  \u{2714} {name} ({provider_type})");
             }
             Err(e) => {
                 statuses.push(ProviderStatus {
@@ -452,13 +456,13 @@ async fn build_upstreams(
                         .to_string(),
                     other => other.to_string(),
                 };
-                eprintln!("  \u{2718} {name} \u{2014} {}", simplify_error(&reason));
+                tracing::warn!("  \u{2718} {name} \u{2014} {}", simplify_error(&reason));
             }
         }
     }
     let connected = upstreams.len();
     if total > 0 {
-        eprintln!("Ready ({connected}/{total} connected)");
+        tracing::info!("Ready ({connected}/{total} connected)");
     }
     Ok((upstreams, statuses))
 }
@@ -478,6 +482,8 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
         })?;
         let own_pid = std::process::id();
         let sock_path = pid::sock_path(&run_dir, own_pid);
+        let log_path = pid::log_path(&run_dir, own_pid);
+        let _log_handle = log_file::spawn_log_writer(log_path, &log_sender);
         let initializing_report = GatewayStatusReport {
             state: "Initializing".to_string(),
             providers: vec![],
@@ -514,6 +520,16 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
         result
     })
     .await
+}
+
+async fn dispatch_logs(
+    args: mcp_gateway::adapters::driving::ui::command::LogsArgs,
+) -> Result<(), DaemonError> {
+    let run_dir = pid::default_run_dir().unwrap_or_default();
+    let instances = pid::list_instances(&run_dir)?;
+    let instance = resolve_instance(args.port, &instances)?;
+    let path = pid::log_path(&run_dir, instance.pid);
+    log_file::read_log(&path, args.follow).await
 }
 
 async fn run_attach(port_override: Option<u16>) -> Result<(), DaemonError> {

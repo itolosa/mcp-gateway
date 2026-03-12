@@ -42,6 +42,8 @@ pub enum Command {
     Restart(StartArgs),
     /// Attach to a running gateway daemon and stream logs
     Attach(AttachArgs),
+    /// Show logs from a running gateway instance
+    Logs(LogsArgs),
     /// Manage OAuth authentication for upstream servers
     Oauth(OAuthArgs),
 }
@@ -65,6 +67,16 @@ pub struct AttachArgs {
     /// Port to connect to (prompts if multiple running)
     #[arg(long, short)]
     pub port: Option<u16>,
+}
+
+#[derive(Debug, Parser)]
+pub struct LogsArgs {
+    /// Port of the instance to read logs from (prompts if multiple running)
+    #[arg(long, short)]
+    pub port: Option<u16>,
+    /// Follow log output (like tail -f)
+    #[arg(long, short)]
+    pub follow: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -628,6 +640,42 @@ mod tests {
     fn denylist_remove_requires_tools() {
         let result = Cli::try_parse_from(["mcp-gateway", "denylist", "remove", "my-server"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_logs() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "logs"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Logs(ref args)) if args.port.is_none() && !args.follow
+        ));
+    }
+
+    #[test]
+    fn parses_logs_with_follow() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "logs", "--follow"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Logs(ref args)) if args.follow
+        ));
+    }
+
+    #[test]
+    fn parses_logs_with_follow_short() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "logs", "-f"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Logs(ref args)) if args.follow
+        ));
+    }
+
+    #[test]
+    fn parses_logs_with_port() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "logs", "--port", "9090"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Logs(ref args)) if args.port == Some(9090)
+        ));
     }
 
     #[test]

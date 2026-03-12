@@ -38,6 +38,10 @@ pub fn sock_path(run_dir: &Path, pid: u32) -> PathBuf {
     run_dir.join(format!("{pid}.sock"))
 }
 
+pub fn log_path(run_dir: &Path, pid: u32) -> PathBuf {
+    run_dir.join(format!("{pid}.log"))
+}
+
 pub fn write_instance(run_dir: &Path, info: &InstanceInfo) -> Result<(), DaemonError> {
     let path = instance_path(run_dir, info.pid);
     let json = match info.port {
@@ -81,8 +85,8 @@ pub fn list_instances(run_dir: &Path) -> Result<Vec<InstanceInfo>, DaemonError> 
             instances.push(info);
         } else {
             let _ = std::fs::remove_file(&path);
-            let sock = run_dir.join(format!("{pid}.sock"));
-            let _ = std::fs::remove_file(&sock);
+            let _ = std::fs::remove_file(run_dir.join(format!("{pid}.sock")));
+            let _ = std::fs::remove_file(run_dir.join(format!("{pid}.log")));
         }
     }
     instances.sort_by_key(|i| i.pid);
@@ -154,6 +158,7 @@ pub fn remove_pid_file(path: &Path) -> Result<(), DaemonError> {
 pub fn remove_instance(run_dir: &Path, pid: u32) {
     let _ = std::fs::remove_file(instance_path(run_dir, pid));
     let _ = std::fs::remove_file(sock_path(run_dir, pid));
+    let _ = std::fs::remove_file(log_path(run_dir, pid));
 }
 
 pub fn send_signal(pid: u32, signal: &str) -> Result<(), DaemonError> {
@@ -241,6 +246,13 @@ mod tests {
     }
 
     #[test]
+    fn log_path_contains_pid() {
+        let dir = Path::new("/tmp/run");
+        let path = log_path(dir, 1234);
+        assert_eq!(path, PathBuf::from("/tmp/run/1234.log"));
+    }
+
+    #[test]
     fn write_instance_creates_json_file() {
         let dir = tempfile::tempdir().unwrap();
         let info = InstanceInfo {
@@ -302,10 +314,12 @@ mod tests {
         };
         write_instance(run_dir, &info).unwrap();
         std::fs::write(run_dir.join(format!("{}.sock", u32::MAX)), "").unwrap();
+        std::fs::write(run_dir.join(format!("{}.log", u32::MAX)), "").unwrap();
         let instances = list_instances(run_dir).unwrap();
         assert!(instances.is_empty());
         assert!(!run_dir.join(format!("{}.json", u32::MAX)).exists());
         assert!(!run_dir.join(format!("{}.sock", u32::MAX)).exists());
+        assert!(!run_dir.join(format!("{}.log", u32::MAX)).exists());
     }
 
     #[test]
@@ -405,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_instance_cleans_both_files() {
+    fn remove_instance_cleans_all_files() {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
         let info = InstanceInfo {
@@ -415,9 +429,11 @@ mod tests {
         };
         write_instance(run_dir, &info).unwrap();
         std::fs::write(run_dir.join("42.sock"), "").unwrap();
+        std::fs::write(run_dir.join("42.log"), "").unwrap();
         remove_instance(run_dir, 42);
         assert!(!run_dir.join("42.json").exists());
         assert!(!run_dir.join("42.sock").exists());
+        assert!(!run_dir.join("42.log").exists());
     }
 
     #[test]
