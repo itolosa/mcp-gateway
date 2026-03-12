@@ -13,6 +13,7 @@ pub struct ProviderStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GatewayStatusReport {
+    pub state: String,
     pub providers: Vec<ProviderStatus>,
 }
 
@@ -65,6 +66,7 @@ mod tests {
 
     fn sample_report() -> GatewayStatusReport {
         GatewayStatusReport {
+            state: "Listening".to_string(),
             providers: vec![
                 ProviderStatus {
                     name: "alpha".to_string(),
@@ -92,7 +94,10 @@ mod tests {
 
     #[test]
     fn empty_report_serializes() {
-        let report = GatewayStatusReport { providers: vec![] };
+        let report = GatewayStatusReport {
+            state: "Listening".to_string(),
+            providers: vec![],
+        };
         let json = serde_json::to_string(&report).unwrap();
         let parsed: GatewayStatusReport = serde_json::from_str(&json).unwrap();
         assert_eq!(report, parsed);
@@ -164,7 +169,10 @@ mod tests {
 
     #[test]
     fn gateway_status_report_debug_format() {
-        let report = GatewayStatusReport { providers: vec![] };
+        let report = GatewayStatusReport {
+            state: "Listening".to_string(),
+            providers: vec![],
+        };
         let debug = format!("{report:?}");
         assert!(debug.contains("providers"));
     }
@@ -175,7 +183,10 @@ mod tests {
         let sock_path = dir.path().join("stale.sock");
         // Create a regular file at the socket path
         std::fs::write(&sock_path, "stale").unwrap();
-        let report = GatewayStatusReport { providers: vec![] };
+        let report = GatewayStatusReport {
+            state: "Listening".to_string(),
+            providers: vec![],
+        };
         let (_tx, rx) = tokio::sync::watch::channel(report.clone());
         // Should succeed despite stale file
         let _handle = start_status_listener(sock_path.clone(), rx);
@@ -214,7 +225,10 @@ mod tests {
     async fn listener_reflects_updated_report() {
         let dir = tempfile::tempdir().unwrap();
         let sock_path = dir.path().join("watch.sock");
-        let initial = GatewayStatusReport { providers: vec![] };
+        let initial = GatewayStatusReport {
+            state: "Initializing".to_string(),
+            providers: vec![],
+        };
         let (tx, rx) = tokio::sync::watch::channel(initial.clone());
 
         let _handle = start_status_listener(sock_path.clone(), rx);

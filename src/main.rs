@@ -232,10 +232,10 @@ async fn dispatch_status(port_arg: Option<u16>) -> Result<(), DaemonError> {
         Some(p) => format!("{} port {p}", instance.transport),
         None => instance.transport.clone(),
     };
-    tracing::info!("{label} (PID {})", instance.pid);
     let sock_path = pid::sock_path(&run_dir, instance.pid);
     match status_socket::query_status(&sock_path).await {
         Ok(report) => {
+            tracing::info!("{label} (PID {}) — {}", instance.pid, report.state);
             if report.providers.is_empty() {
                 tracing::info!("no providers configured");
             } else {
@@ -256,6 +256,7 @@ async fn dispatch_status(port_arg: Option<u16>) -> Result<(), DaemonError> {
             }
         }
         Err(_) => {
+            tracing::info!("{label} (PID {})", instance.pid);
             tracing::info!("provider status unavailable");
         }
     }
@@ -318,11 +319,15 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
             message: e.to_string(),
         })?;
         let sock_path = pid::sock_path(&run_dir, own_pid);
-        let empty_report = GatewayStatusReport { providers: vec![] };
-        let (report_tx, report_rx) = tokio::sync::watch::channel(empty_report);
+        let initializing_report = GatewayStatusReport {
+            state: "Initializing".to_string(),
+            providers: vec![],
+        };
+        let (report_tx, report_rx) = tokio::sync::watch::channel(initializing_report);
         let _status_handle = status_socket::start_status_listener(sock_path.clone(), report_rx);
         let (upstreams, statuses) = build_upstreams(servers).await?;
         let _ = report_tx.send(GatewayStatusReport {
+            state: "Listening".to_string(),
             providers: statuses,
         });
         let result = if has_cli_tools {
@@ -427,11 +432,15 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
         })?;
         let own_pid = std::process::id();
         let sock_path = pid::sock_path(&run_dir, own_pid);
-        let empty_report = GatewayStatusReport { providers: vec![] };
-        let (report_tx, report_rx) = tokio::sync::watch::channel(empty_report);
+        let initializing_report = GatewayStatusReport {
+            state: "Initializing".to_string(),
+            providers: vec![],
+        };
+        let (report_tx, report_rx) = tokio::sync::watch::channel(initializing_report);
         let _status_handle = status_socket::start_status_listener(sock_path.clone(), report_rx);
         let (upstreams, statuses) = build_upstreams(servers).await?;
         let _ = report_tx.send(GatewayStatusReport {
+            state: "Listening".to_string(),
             providers: statuses,
         });
         let ct = CancellationToken::new();
