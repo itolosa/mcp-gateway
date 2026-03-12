@@ -2,40 +2,73 @@ use std::path::{Path, PathBuf};
 
 use super::error::DaemonError;
 
-pub fn default_pid_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".mcp-gateway.pid"))
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceInfo {
+    pub port: u16,
+    pub pid: u32,
 }
 
-pub fn default_port_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".mcp-gateway.port"))
+pub fn default_run_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".mcp-gateway").join("run"))
 }
 
-pub fn default_sock_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".mcp-gateway.sock"))
+pub fn ensure_run_dir() -> Result<PathBuf, DaemonError> {
+    ensure_run_dir_at(default_run_dir())
 }
 
-pub fn write_port(path: &Path, port: u16) -> Result<(), DaemonError> {
-    std::fs::write(path, port.to_string()).map_err(|e| DaemonError::PidWrite {
-        message: e.to_string(),
-    })
+fn ensure_run_dir_at(run_dir: Option<PathBuf>) -> Result<PathBuf, DaemonError> {
+    let dir = run_dir.ok_or_else(|| DaemonError::PidWrite {
+        message: "cannot determine home directory".to_string(),
+    })?;
+    std::fs::create_dir_all(&dir).map_err(|e| DaemonError::PidWrite {
+        message: format!("cannot create run directory: {e}"),
+    })?;
+    Ok(dir)
 }
 
-pub fn read_port(path: &Path) -> Result<Option<u16>, DaemonError> {
-    match std::fs::read_to_string(path) {
-        Ok(contents) => {
-            let port = contents
-                .trim()
-                .parse::<u16>()
-                .map_err(|e| DaemonError::PidRead {
-                    message: e.to_string(),
-                })?;
-            Ok(Some(port))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(DaemonError::PidRead {
-            message: e.to_string(),
-        }),
+pub fn pid_path_for_port(run_dir: &Path, port: u16) -> PathBuf {
+    run_dir.join(format!("{port}.pid"))
+}
+
+pub fn sock_path_for_port(run_dir: &Path, port: u16) -> PathBuf {
+    run_dir.join(format!("{port}.sock"))
+}
+
+pub fn list_instances(run_dir: &Path) -> Result<Vec<InstanceInfo>, DaemonError> {
+    if !run_dir.exists() {
+        return Ok(vec![]);
     }
+    let entries = std::fs::read_dir(run_dir).map_err(|e| DaemonError::PidRead {
+        message: format!("cannot read run directory: {e}"),
+    })?;
+    let mut instances = Vec::new();
+    for entry in entries {
+        #[rustfmt::skip]
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        #[rustfmt::skip]
+        let Some(ext) = path.extension() else { continue };
+        if ext != "pid" {
+            continue;
+        }
+        #[rustfmt::skip]
+        let Some(stem) = path.file_stem() else { continue };
+        #[rustfmt::skip]
+        let Ok(port) = stem.to_string_lossy().parse::<u16>() else { continue };
+        match read_pid(&path) {
+            Ok(Some(pid)) if is_process_alive(pid) => {
+                instances.push(InstanceInfo { port, pid });
+            }
+            Ok(Some(_)) => {
+                let _ = std::fs::remove_file(&path);
+                let sock = run_dir.join(format!("{port}.sock"));
+                let _ = std::fs::remove_file(&sock);
+            }
+            _ => {}
+        }
+    }
+    instances.sort_by_key(|i| i.port);
+    Ok(instances)
 }
 
 pub fn write_pid(path: &Path, pid: u32) -> Result<(), DaemonError> {
@@ -130,9 +163,6 @@ pub fn stop_daemon(pid_path: &Path) -> Result<(), DaemonError> {
     send_signal(pid, "TERM")?;
     wait_for_exit(pid);
     remove_pid_file(pid_path)?;
-    default_port_path()
-        .map(|p| remove_pid_file(&p))
-        .transpose()?;
     Ok(())
 }
 
@@ -157,9 +187,128 @@ pub async fn check_port_available(port: u16) -> Result<(), DaemonError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_run_dir_returns_some() {
+        let path = default_run_dir();
+        assert!(path.is_some());
+        let p = path.unwrap();
+        assert!(p.to_string_lossy().contains(".mcp-gateway"));
+        assert!(p.to_string_lossy().contains("run"));
+    }
+
+    #[test]
+    fn ensure_run_dir_creates_directory() {
+        // We can't easily mock HOME, but we can verify ensure_run_dir succeeds
+        // and returns a path that exists.
+        let dir = ensure_run_dir().unwrap();
+        assert!(dir.exists());
+        assert!(dir.is_dir());
+    }
+
+    #[test]
+    fn pid_path_for_port_contains_port() {
+        let dir = Path::new("/tmp/run");
+        let path = pid_path_for_port(dir, 8080);
+        assert_eq!(path, PathBuf::from("/tmp/run/8080.pid"));
+    }
+
+    #[test]
+    fn sock_path_for_port_contains_port() {
+        let dir = Path::new("/tmp/run");
+        let path = sock_path_for_port(dir, 9090);
+        assert_eq!(path, PathBuf::from("/tmp/run/9090.sock"));
+    }
+
+    #[test]
+    fn list_instances_returns_empty_when_dir_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path().join("nonexistent");
+        let instances = list_instances(&run_dir).unwrap();
+        assert!(instances.is_empty());
+    }
+
+    #[test]
+    fn list_instances_returns_alive_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        let pid_path = run_dir.join("8080.pid");
+        write_pid(&pid_path, std::process::id()).unwrap();
+        let instances = list_instances(run_dir).unwrap();
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].port, 8080);
+        assert_eq!(instances[0].pid, std::process::id());
+    }
+
+    #[test]
+    fn list_instances_cleans_stale_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        let pid_path = run_dir.join("9090.pid");
+        let sock_path = run_dir.join("9090.sock");
+        write_pid(&pid_path, u32::MAX).unwrap();
+        std::fs::write(&sock_path, "").unwrap();
+        let instances = list_instances(run_dir).unwrap();
+        assert!(instances.is_empty());
+        assert!(!pid_path.exists());
+        assert!(!sock_path.exists());
+    }
+
+    #[test]
+    fn list_instances_skips_non_pid_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        std::fs::write(run_dir.join("8080.sock"), "").unwrap();
+        std::fs::write(run_dir.join("readme.txt"), "").unwrap();
+        let instances = list_instances(run_dir).unwrap();
+        assert!(instances.is_empty());
+    }
+
+    #[test]
+    fn list_instances_skips_non_numeric_filenames() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        std::fs::write(run_dir.join("abc.pid"), "1234").unwrap();
+        let instances = list_instances(run_dir).unwrap();
+        assert!(instances.is_empty());
+    }
+
+    #[test]
+    fn list_instances_sorts_by_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        let own_pid = std::process::id();
+        write_pid(&run_dir.join("9090.pid"), own_pid).unwrap();
+        write_pid(&run_dir.join("8080.pid"), own_pid).unwrap();
+        let instances = list_instances(run_dir).unwrap();
+        assert_eq!(instances.len(), 2);
+        assert_eq!(instances[0].port, 8080);
+        assert_eq!(instances[1].port, 9090);
+    }
+
+    #[test]
+    fn instance_info_debug() {
+        let info = InstanceInfo {
+            port: 8080,
+            pid: 1234,
+        };
+        let debug = format!("{info:?}");
+        assert!(debug.contains("8080"));
+        assert!(debug.contains("1234"));
+    }
+
+    #[test]
+    fn instance_info_clone() {
+        let info = InstanceInfo {
+            port: 8080,
+            pid: 1234,
+        };
+        let cloned = info.clone();
+        assert_eq!(info, cloned);
+    }
 
     #[test]
     fn write_read_roundtrip() {
@@ -252,15 +401,6 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let result = check_port_available(port).await;
         assert!(matches!(result, Err(DaemonError::PortInUse { .. })));
-    }
-
-    #[test]
-    fn default_pid_path_returns_some() {
-        // In test environments, home_dir should return Some
-        let path = default_pid_path();
-        assert!(path.is_some());
-        let p = path.unwrap();
-        assert!(p.to_string_lossy().contains(".mcp-gateway.pid"));
     }
 
     #[test]
@@ -380,54 +520,6 @@ mod tests {
     }
 
     #[test]
-    fn default_port_path_returns_some() {
-        let path = default_port_path();
-        assert!(path.is_some());
-        let p = path.unwrap();
-        assert!(p.to_string_lossy().contains(".mcp-gateway.port"));
-    }
-
-    #[test]
-    fn write_read_port_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.port");
-        write_port(&path, 8080).unwrap();
-        let port = read_port(&path).unwrap();
-        assert_eq!(port, Some(8080));
-    }
-
-    #[test]
-    fn read_port_returns_none_on_missing_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing.port");
-        let port = read_port(&path).unwrap();
-        assert_eq!(port, None);
-    }
-
-    #[test]
-    fn read_port_returns_error_on_malformed_content() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("bad.port");
-        std::fs::write(&path, "not-a-number").unwrap();
-        let result = read_port(&path);
-        assert!(matches!(result, Err(DaemonError::PidRead { .. })));
-    }
-
-    #[test]
-    fn read_port_returns_error_on_io_failure() {
-        let dir = tempfile::tempdir().unwrap();
-        let result = read_port(dir.path());
-        assert!(matches!(result, Err(DaemonError::PidRead { .. })));
-    }
-
-    #[test]
-    fn write_port_to_nonexistent_dir_returns_error() {
-        let path = Path::new("/nonexistent/dir/test.port");
-        let result = write_port(path, 8080);
-        assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
-    }
-
-    #[test]
     fn remove_pid_file_returns_error_on_directory() {
         // Removing a non-empty directory with remove_file triggers a non-NotFound error
         let dir = tempfile::tempdir().unwrap();
@@ -436,14 +528,6 @@ mod tests {
         std::fs::write(inner.join("file"), "data").unwrap();
         let result = remove_pid_file(&inner);
         assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
-    }
-
-    #[test]
-    fn default_sock_path_returns_some() {
-        let path = default_sock_path();
-        assert!(path.is_some());
-        let p = path.unwrap();
-        assert!(p.to_string_lossy().contains(".mcp-gateway.sock"));
     }
 
     #[test]
@@ -464,6 +548,36 @@ mod tests {
     #[test]
     fn is_valid_pid_rejects_above_i32_max() {
         assert!(!is_valid_pid(i32::MAX as u32 + 1));
+    }
+
+    #[test]
+    fn ensure_run_dir_at_returns_error_when_none() {
+        let result = ensure_run_dir_at(None);
+        assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
+    }
+
+    #[test]
+    fn ensure_run_dir_at_returns_error_when_create_fails() {
+        let result = ensure_run_dir_at(Some(PathBuf::from("/dev/null/impossible")));
+        assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
+    }
+
+    #[test]
+    fn list_instances_returns_error_on_non_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("not-a-dir");
+        std::fs::write(&file_path, "data").unwrap();
+        let result = list_instances(&file_path);
+        assert!(matches!(result, Err(DaemonError::PidRead { .. })));
+    }
+
+    #[test]
+    fn list_instances_skips_malformed_pid_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        std::fs::write(run_dir.join("7070.pid"), "not-a-number").unwrap();
+        let instances = list_instances(run_dir).unwrap();
+        assert!(instances.is_empty());
     }
 
     #[test]

@@ -30,10 +30,10 @@ pub enum Command {
     Run(RunArgs),
     /// Start the gateway as a background daemon
     Start(StartArgs),
-    /// Stop the running gateway daemon
-    Stop,
-    /// Show the status of the gateway daemon
-    Status,
+    /// Stop a running gateway instance
+    Stop(StopArgs),
+    /// Show the status of running gateway instances
+    Status(StatusArgs),
     /// Restart the gateway daemon
     Restart(StartArgs),
     /// Attach to a running gateway daemon and stream logs
@@ -43,8 +43,22 @@ pub enum Command {
 }
 
 #[derive(Debug, Parser)]
+pub struct StopArgs {
+    /// Port of the instance to stop (prompts if multiple running)
+    #[arg(long, short)]
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Parser)]
+pub struct StatusArgs {
+    /// Port of the instance to inspect (prompts if multiple running)
+    #[arg(long, short)]
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Parser)]
 pub struct AttachArgs {
-    /// Port to connect to (overrides auto-detection from port file)
+    /// Port to connect to (prompts if multiple running)
     #[arg(long, short)]
     pub port: Option<u16>,
 }
@@ -453,13 +467,37 @@ mod tests {
     #[test]
     fn parses_stop() {
         let cli = Cli::try_parse_from(["mcp-gateway", "stop"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Stop)));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Stop(ref args)) if args.port.is_none()
+        ));
+    }
+
+    #[test]
+    fn parses_stop_with_port() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "stop", "--port", "9090"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Stop(ref args)) if args.port == Some(9090)
+        ));
     }
 
     #[test]
     fn parses_status() {
         let cli = Cli::try_parse_from(["mcp-gateway", "status"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Status)));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Status(ref args)) if args.port.is_none()
+        ));
+    }
+
+    #[test]
+    fn parses_status_with_port() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "status", "--port", "8080"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Status(ref args)) if args.port == Some(8080)
+        ));
     }
 
     #[test]

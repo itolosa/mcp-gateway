@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GatewayConfig {
     #[serde(default, rename = "mcpServers")]
@@ -12,6 +16,8 @@ pub struct GatewayConfig {
         rename = "cliTools"
     )]
     pub cli_operations: BTreeMap<String, CliOperationDef>,
+    #[serde(default, skip_serializing_if = "is_false", rename = "singleInstance")]
+    pub single_instance: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +156,7 @@ mod tests {
     fn deserialize_empty_json_gives_empty_config() {
         let config: GatewayConfig = serde_json::from_str("{}").unwrap();
         assert!(config.mcp_servers.is_empty());
+        assert!(!config.single_instance);
     }
 
     #[test]
@@ -494,6 +501,47 @@ mod tests {
         let config = GatewayConfig::default();
         let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("cliTools"));
+    }
+
+    #[test]
+    fn single_instance_defaults_to_false() {
+        let config: GatewayConfig = serde_json::from_str("{}").unwrap();
+        assert!(!config.single_instance);
+    }
+
+    #[test]
+    fn single_instance_true_deserializes() {
+        let json = r#"{"singleInstance": true}"#;
+        let config: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert!(config.single_instance);
+    }
+
+    #[test]
+    fn single_instance_false_omitted_from_json() {
+        let config = GatewayConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("singleInstance"));
+    }
+
+    #[test]
+    fn single_instance_true_included_in_json() {
+        let config = GatewayConfig {
+            single_instance: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("singleInstance"));
+    }
+
+    #[test]
+    fn single_instance_roundtrip() {
+        let config = GatewayConfig {
+            single_instance: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let roundtrip: GatewayConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip, config);
     }
 
     #[test]

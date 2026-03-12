@@ -17,6 +17,7 @@ use mcp_gateway::adapters::driven::connectivity::mcp_protocol::proxy::{
 };
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, RmcpProviderClient};
 use mcp_gateway::adapters::driven::storage::{ConfigStore, FileConfigStore};
+use mcp_gateway::adapters::driving::execution::process::error::DaemonError;
 use mcp_gateway::adapters::driving::execution::process::log_broadcast::BroadcastLayer;
 use mcp_gateway::adapters::driving::execution::process::pid;
 use mcp_gateway::adapters::driving::execution::process::status_socket::{
@@ -93,8 +94,8 @@ async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + Confi
         Some(Command::Start(args)) => dispatch_start(registry, config_path, args, log_sender)
             .await
             .map_err(|e| e.to_string()),
-        Some(Command::Stop) => dispatch_stop().map_err(|e| e.to_string()),
-        Some(Command::Status) => dispatch_status().await.map_err(|e| e.to_string()),
+        Some(Command::Stop(args)) => dispatch_stop(args.port).map_err(|e| e.to_string()),
+        Some(Command::Status(args)) => dispatch_status(args.port).await.map_err(|e| e.to_string()),
         Some(Command::Restart(args)) => {
             dispatch_restart(config_path, args.port).map_err(|e| e.to_string())
         }
@@ -131,6 +132,54 @@ fn dispatch_denylist<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
     }
 }
 
+fn check_single_instance(instances: &[pid::InstanceInfo]) -> Result<(), DaemonError> {
+    if let Some(first) = instances.first() {
+        return Err(DaemonError::AlreadyRunning { pid: first.pid });
+    }
+    Ok(())
+}
+
+fn resolve_instance(
+    port_arg: Option<u16>,
+    instances: &[pid::InstanceInfo],
+) -> Result<pid::InstanceInfo, DaemonError> {
+    match (port_arg, instances) {
+        (_, []) => Err(DaemonError::NotRunning),
+        (Some(p), _) => instances
+            .iter()
+            .find(|i| i.port == p)
+            .cloned()
+            .ok_or(DaemonError::NotRunning),
+        (None, [single]) => Ok(single.clone()),
+        (None, _) => prompt_select_instance(instances),
+    }
+}
+
+fn prompt_select_instance(
+    instances: &[pid::InstanceInfo],
+) -> Result<pid::InstanceInfo, DaemonError> {
+    eprintln!("Multiple instances running:");
+    for (i, instance) in instances.iter().enumerate() {
+        eprintln!("  {}) port {} (PID {})", i + 1, instance.port, instance.pid);
+    }
+    eprint!("Select instance [1-{}]: ", instances.len());
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| DaemonError::UserInput(format!("failed to read input: {e}")))?;
+    let choice: usize = input
+        .trim()
+        .parse()
+        .map_err(|_| DaemonError::UserInput("invalid selection".to_string()))?;
+    if choice < 1 || choice > instances.len() {
+        return Err(DaemonError::UserInput("selection out of range".to_string()));
+    }
+    Ok(instances
+        .get(choice - 1)
+        .ok_or_else(|| DaemonError::UserInput("selection out of range".to_string()))?
+        .clone())
+}
+
 async fn dispatch_start<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     config_path: &std::path::Path,
@@ -139,6 +188,12 @@ async fn dispatch_start<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigS
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.transport != DownstreamTransport::Http {
         return Err("daemon mode only supports --transport http".into());
+    }
+    let gateway_config = registry.store().load()?;
+    if gateway_config.single_instance {
+        let run_dir = pid::default_run_dir().unwrap_or_default();
+        let instances = pid::list_instances(&run_dir)?;
+        check_single_instance(&instances)?;
     }
     if args.foreground {
         run_foreground_daemon(registry, args.port, log_sender)
@@ -149,65 +204,65 @@ async fn dispatch_start<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigS
     }
 }
 
-fn dispatch_stop(
-) -> Result<(), mcp_gateway::adapters::driving::execution::process::error::DaemonError> {
-    let pid_path = pid::default_pid_path().unwrap_or_default();
+fn dispatch_stop(port_arg: Option<u16>) -> Result<(), DaemonError> {
+    let run_dir = pid::default_run_dir().unwrap_or_default();
+    let instances = pid::list_instances(&run_dir)?;
+    let instance = resolve_instance(port_arg, &instances)?;
+    let pid_path = pid::pid_path_for_port(&run_dir, instance.port);
     pid::stop_daemon(&pid_path)?;
-    let sock_path = pid::default_sock_path().unwrap_or_default();
+    let sock_path = pid::sock_path_for_port(&run_dir, instance.port);
     status_socket::remove_sock_file(&sock_path);
-    tracing::info!("gateway stopped");
+    tracing::info!("gateway on port {} stopped", instance.port);
     Ok(())
 }
 
-async fn dispatch_status(
-) -> Result<(), mcp_gateway::adapters::driving::execution::process::error::DaemonError> {
-    let pid_path = pid::default_pid_path().unwrap_or_default();
-    match pid::daemon_status(&pid_path)? {
-        Some(p) => {
-            tracing::info!("gateway is running (PID {p})");
-            let sock_path = pid::default_sock_path().unwrap_or_default();
-            match status_socket::query_status(&sock_path).await {
-                Ok(report) => {
-                    if report.providers.is_empty() {
-                        tracing::info!("no providers configured");
+async fn dispatch_status(port_arg: Option<u16>) -> Result<(), DaemonError> {
+    let run_dir = pid::default_run_dir().unwrap_or_default();
+    let instances = pid::list_instances(&run_dir)?;
+    if instances.is_empty() {
+        tracing::info!("no instances running");
+        return Ok(());
+    }
+    let instance = resolve_instance(port_arg, &instances)?;
+    tracing::info!("gateway on port {} (PID {})", instance.port, instance.pid);
+    let sock_path = pid::sock_path_for_port(&run_dir, instance.port);
+    match status_socket::query_status(&sock_path).await {
+        Ok(report) => {
+            if report.providers.is_empty() {
+                tracing::info!("no providers configured");
+            } else {
+                for provider in &report.providers {
+                    let status = if provider.connected {
+                        "connected"
                     } else {
-                        for provider in &report.providers {
-                            let status = if provider.connected {
-                                "connected"
-                            } else {
-                                "disconnected"
-                            };
-                            tracing::info!(
-                                "  {} ({} {}) — {}",
-                                provider.name,
-                                provider.provider_type,
-                                provider.target,
-                                status
-                            );
-                        }
-                    }
-                }
-                Err(_) => {
-                    tracing::info!("provider status unavailable");
+                        "disconnected"
+                    };
+                    tracing::info!(
+                        "  {} ({} {}) — {}",
+                        provider.name,
+                        provider.provider_type,
+                        provider.target,
+                        status
+                    );
                 }
             }
         }
-        None => tracing::info!("gateway is not running"),
+        Err(_) => {
+            tracing::info!("provider status unavailable");
+        }
     }
     Ok(())
 }
 
-fn dispatch_restart(
-    config_path: &std::path::Path,
-    port: u16,
-) -> Result<(), mcp_gateway::adapters::driving::execution::process::error::DaemonError> {
-    let pid_path = pid::default_pid_path().unwrap_or_default();
+fn dispatch_restart(config_path: &std::path::Path, port: u16) -> Result<(), DaemonError> {
+    let run_dir = pid::ensure_run_dir()?;
+    let pid_path = pid::pid_path_for_port(&run_dir, port);
     match pid::stop_daemon(&pid_path) {
-        Ok(())
-        | Err(mcp_gateway::adapters::driving::execution::process::error::DaemonError::NotRunning) =>
-            {}
+        Ok(()) | Err(DaemonError::NotRunning) => {}
         Err(e) => return Err(e),
     }
+    let sock_path = pid::sock_path_for_port(&run_dir, port);
+    status_socket::remove_sock_file(&sock_path);
     start_daemon(config_path, port)
 }
 
@@ -223,15 +278,46 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
+    if gateway_config.single_instance && transport == DownstreamTransport::Http {
+        let run_dir = pid::default_run_dir().unwrap_or_default();
+        let instances = pid::list_instances(&run_dir).unwrap_or_default();
+        if let Some(first) = instances.first() {
+            return Err(ProxyError::UpstreamInit {
+                message: format!(
+                    "single-instance mode: already running on port {} (PID {})",
+                    first.port, first.pid
+                ),
+            });
+        }
+    }
     let has_cli_tools = !gateway_config.cli_operations.is_empty();
     let cli_tools = gateway_config.cli_operations;
+    let is_http = transport == DownstreamTransport::Http;
     run_run(registry, |servers| async move {
         let (upstreams, statuses) = build_upstreams(servers).await?;
-        let sock_path = pid::default_sock_path().unwrap_or_default();
         let report = GatewayStatusReport {
             providers: statuses,
         };
-        let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
+        let mut cleanup_pid: Option<std::path::PathBuf> = None;
+        let mut cleanup_sock: Option<std::path::PathBuf> = None;
+        let _status_handle = if is_http {
+            let run_dir = pid::ensure_run_dir().map_err(|e| ProxyError::UpstreamInit {
+                message: e.to_string(),
+            })?;
+            let pid_path = pid::pid_path_for_port(&run_dir, port);
+            let sock_path = pid::sock_path_for_port(&run_dir, port);
+            pid::write_pid(&pid_path, std::process::id()).map_err(|e| {
+                ProxyError::UpstreamInit {
+                    message: e.to_string(),
+                }
+            })?;
+            let handle = status_socket::start_status_listener(sock_path.clone(), report);
+            cleanup_pid = Some(pid_path);
+            cleanup_sock = Some(sock_path);
+            handle
+        } else {
+            None
+        };
         let result = if has_cli_tools {
             let cli_runner = ProcessCliRunner::new(cli_tools);
             let gateway = Gateway::new(upstreams, cli_runner);
@@ -258,7 +344,12 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
                 }
             }
         };
-        status_socket::remove_sock_file(&sock_path);
+        if let Some(p) = cleanup_pid {
+            let _ = pid::remove_pid_file(&p);
+        }
+        if let Some(s) = cleanup_sock {
+            status_socket::remove_sock_file(&s);
+        }
         result
     })
     .await
@@ -330,10 +421,13 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
     let cli_tools = gateway_config.cli_operations;
     run_run(registry, |servers| async move {
         let (upstreams, statuses) = build_upstreams(servers).await?;
-        let sock_path = pid::default_sock_path().unwrap_or_default();
         let report = GatewayStatusReport {
             providers: statuses,
         };
+        let run_dir = pid::ensure_run_dir().map_err(|e| ProxyError::UpstreamInit {
+            message: e.to_string(),
+        })?;
+        let sock_path = pid::sock_path_for_port(&run_dir, port);
         let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
         let ct = CancellationToken::new();
         let ct_signal = ct.clone();
@@ -362,55 +456,35 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
     .await
 }
 
-async fn run_attach(
-    port_override: Option<u16>,
-) -> Result<(), mcp_gateway::adapters::driving::execution::process::error::DaemonError> {
+async fn run_attach(port_override: Option<u16>) -> Result<(), DaemonError> {
     let port = match port_override {
         Some(p) => p,
         None => {
-            let pid_path = pid::default_pid_path().unwrap_or_default();
-            if pid::check_already_running(&pid_path)?.is_none() {
-                return Err(mcp_gateway::adapters::driving::execution::process::error::DaemonError::NotRunning);
-            }
-            let port_path = pid::default_port_path().unwrap_or_default();
-            pid::read_port(&port_path)?.ok_or_else(|| {
-                mcp_gateway::adapters::driving::execution::process::error::DaemonError::AttachFailed {
-                    message: "port file not found".to_string(),
-                }
-            })?
+            let run_dir = pid::default_run_dir().unwrap_or_default();
+            let instances = pid::list_instances(&run_dir)?;
+            resolve_instance(None, &instances)?.port
         }
     };
     mcp_gateway::adapters::driving::execution::process::attach::attach(port, &mut std::io::stdout())
         .await
 }
 
-fn start_daemon(
-    config_path: &std::path::Path,
-    port: u16,
-) -> Result<(), mcp_gateway::adapters::driving::execution::process::error::DaemonError> {
-    let pid_path = pid::default_pid_path().unwrap_or_default();
+fn start_daemon(config_path: &std::path::Path, port: u16) -> Result<(), DaemonError> {
+    let run_dir = pid::ensure_run_dir()?;
+    let pid_path = pid::pid_path_for_port(&run_dir, port);
     if let Some(existing_pid) = pid::check_already_running(&pid_path)? {
-        return Err(
-            mcp_gateway::adapters::driving::execution::process::error::DaemonError::AlreadyRunning {
-                pid: existing_pid,
-            },
-        );
+        return Err(DaemonError::AlreadyRunning { pid: existing_pid });
     }
     check_port_available(port)?;
     let child = spawn_daemon_process(config_path, port)?;
     pid::write_pid(&pid_path, child.id())?;
-    let port_path = pid::default_port_path().unwrap_or_default();
-    pid::write_port(&port_path, port)?;
     tracing::info!("gateway started on port {port} (PID {})", child.id());
     Ok(())
 }
 
-fn check_port_available(
-    port: u16,
-) -> Result<(), mcp_gateway::adapters::driving::execution::process::error::DaemonError> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|_| {
-        mcp_gateway::adapters::driving::execution::process::error::DaemonError::PortInUse { port }
-    })?;
+fn check_port_available(port: u16) -> Result<(), DaemonError> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port))
+        .map_err(|_| DaemonError::PortInUse { port })?;
     drop(listener);
     Ok(())
 }
@@ -418,18 +492,13 @@ fn check_port_available(
 fn spawn_daemon_process(
     config_path: &std::path::Path,
     port: u16,
-) -> Result<
-    std::process::Child,
-    mcp_gateway::adapters::driving::execution::process::error::DaemonError,
-> {
+) -> Result<std::process::Child, DaemonError> {
     // Use argv[0] to locate our own executable for re-exec
     let exe = std::env::args_os()
         .next()
         .map(std::path::PathBuf::from)
-        .ok_or_else(|| {
-            mcp_gateway::adapters::driving::execution::process::error::DaemonError::PidWrite {
-                message: "cannot determine executable path: argv[0] is empty".to_string(),
-            }
+        .ok_or_else(|| DaemonError::PidWrite {
+            message: "cannot determine executable path: argv[0] is empty".to_string(),
         })?;
 
     std::process::Command::new(exe)
@@ -445,10 +514,8 @@ fn spawn_daemon_process(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| {
-            mcp_gateway::adapters::driving::execution::process::error::DaemonError::PidWrite {
-                message: format!("failed to spawn daemon: {e}"),
-            }
+        .map_err(|e| DaemonError::PidWrite {
+            message: format!("failed to spawn daemon: {e}"),
         })
 }
 

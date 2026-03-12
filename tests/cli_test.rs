@@ -521,14 +521,14 @@ fn stop_when_not_running_prints_error() {
 }
 
 #[test]
-fn status_when_not_running_prints_not_running() {
+fn status_when_not_running_prints_no_instances() {
     let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
     cargo_bin_cmd!()
         .env("HOME", dir.path())
         .arg("status")
         .assert()
         .success()
-        .stderr(contains("not running"));
+        .stderr(contains("no instances running"));
 }
 
 #[test]
@@ -702,9 +702,11 @@ fn oauth_clear_all_force_removes_dir() {
 }
 
 #[test]
-fn status_when_stale_pid_prints_not_running() {
+fn status_when_stale_pid_prints_no_instances() {
     let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
-    let pid_path = dir.path().join(".mcp-gateway.pid");
+    let run_dir = dir.path().join(".mcp-gateway").join("run");
+    std::fs::create_dir_all(&run_dir).unwrap_or_else(|_| unreachable!());
+    let pid_path = run_dir.join("8080.pid");
     let mut file = std::fs::File::create(&pid_path).unwrap_or_else(|_| unreachable!());
     write!(file, "{}", u32::MAX).unwrap_or_else(|_| unreachable!());
     drop(file);
@@ -714,5 +716,5 @@ fn status_when_stale_pid_prints_not_running() {
         .arg("status")
         .assert()
         .success()
-        .stderr(contains("not running"));
+        .stderr(contains("no instances running"));
 }

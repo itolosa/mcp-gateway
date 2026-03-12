@@ -20,6 +20,9 @@ pub enum DaemonError {
 
     #[error("attach failed: {message}")]
     AttachFailed { message: String },
+
+    #[error("{0}")]
+    UserInput(String),
 }
 
 #[cfg(test)]
@@ -80,5 +83,11 @@ mod tests {
         };
         assert!(err.to_string().contains("connection refused"));
         assert!(err.to_string().contains("attach"));
+    }
+
+    #[test]
+    fn user_input_display() {
+        let err = DaemonError::UserInput("invalid selection".to_string());
+        assert!(err.to_string().contains("invalid selection"));
     }
 }
