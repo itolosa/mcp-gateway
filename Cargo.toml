@@ -20,7 +20,7 @@ clap = { version = "4.5", features = ["derive"] }
 dirs = "6"
 http = "1"
 reqwest = "0.13"
-rmcp = { version = "1.1", features = ["client", "server", "transport-io", "transport-child-process", "transport-streamable-http-client-reqwest", "transport-streamable-http-server", "reqwest", "auth"] }
+rmcp = { version = "1.2", features = ["client", "server", "transport-io", "transport-child-process", "transport-streamable-http-client-reqwest", "transport-streamable-http-server", "reqwest", "auth"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
