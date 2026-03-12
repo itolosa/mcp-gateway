@@ -44,7 +44,7 @@ jobs:
         id: shards
         run: |
           count=$(wc -l < current_mutants.txt | tr -d ' ')
-          per_shard=20
+          per_shard=30
           total=$(( (count + per_shard - 1) / per_shard ))
           if [ "$total" -lt 1 ]; then total=1; fi
           echo "shard_total=$total" >> "$GITHUB_OUTPUT"
