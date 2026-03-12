@@ -317,12 +317,14 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
         pid::write_instance(&run_dir, &instance_info).map_err(|e| ProxyError::UpstreamInit {
             message: e.to_string(),
         })?;
-        let (upstreams, statuses) = build_upstreams(servers).await?;
-        let report = GatewayStatusReport {
-            providers: statuses,
-        };
         let sock_path = pid::sock_path(&run_dir, own_pid);
-        let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
+        let empty_report = GatewayStatusReport { providers: vec![] };
+        let (report_tx, report_rx) = tokio::sync::watch::channel(empty_report);
+        let _status_handle = status_socket::start_status_listener(sock_path.clone(), report_rx);
+        let (upstreams, statuses) = build_upstreams(servers).await?;
+        let _ = report_tx.send(GatewayStatusReport {
+            providers: statuses,
+        });
         let result = if has_cli_tools {
             let cli_runner = ProcessCliRunner::new(cli_tools);
             let gateway = Gateway::new(upstreams, cli_runner);
@@ -420,16 +422,18 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
     let has_cli_tools = !gateway_config.cli_operations.is_empty();
     let cli_tools = gateway_config.cli_operations;
     run_run(registry, |servers| async move {
-        let (upstreams, statuses) = build_upstreams(servers).await?;
-        let report = GatewayStatusReport {
-            providers: statuses,
-        };
         let run_dir = pid::ensure_run_dir().map_err(|e| ProxyError::UpstreamInit {
             message: e.to_string(),
         })?;
         let own_pid = std::process::id();
         let sock_path = pid::sock_path(&run_dir, own_pid);
-        let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
+        let empty_report = GatewayStatusReport { providers: vec![] };
+        let (report_tx, report_rx) = tokio::sync::watch::channel(empty_report);
+        let _status_handle = status_socket::start_status_listener(sock_path.clone(), report_rx);
+        let (upstreams, statuses) = build_upstreams(servers).await?;
+        let _ = report_tx.send(GatewayStatusReport {
+            providers: statuses,
+        });
         let ct = CancellationToken::new();
         let ct_signal = ct.clone();
         tokio::spawn(async move {

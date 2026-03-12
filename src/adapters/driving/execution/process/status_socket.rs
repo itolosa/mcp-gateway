@@ -18,7 +18,7 @@ pub struct GatewayStatusReport {
 
 pub fn start_status_listener(
     sock_path: PathBuf,
-    report: GatewayStatusReport,
+    report: tokio::sync::watch::Receiver<GatewayStatusReport>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let _ = std::fs::remove_file(&sock_path);
     let listener = match tokio::net::UnixListener::bind(&sock_path) {
@@ -35,7 +35,7 @@ pub fn start_status_listener(
         loop {
             #[rustfmt::skip]
             let Ok((mut stream, _)) = listener.accept().await else { continue };
-            let json = serde_json::to_string(&report).unwrap_or_default();
+            let json = serde_json::to_string(&*report.borrow()).unwrap_or_default();
             let _ = stream.write_all(json.as_bytes()).await;
             let _ = stream.shutdown().await;
         }
@@ -103,8 +103,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sock_path = dir.path().join("test.sock");
         let report = sample_report();
+        let (_tx, rx) = tokio::sync::watch::channel(report.clone());
 
-        let _handle = start_status_listener(sock_path.clone(), report.clone());
+        let _handle = start_status_listener(sock_path.clone(), rx);
 
         let result = query_status(&sock_path).await.unwrap();
         assert_eq!(result, report);
@@ -115,8 +116,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sock_path = dir.path().join("test.sock");
         let report = sample_report();
+        let (_tx, rx) = tokio::sync::watch::channel(report.clone());
 
-        let _handle = start_status_listener(sock_path.clone(), report.clone());
+        let _handle = start_status_listener(sock_path.clone(), rx);
 
         let result1 = query_status(&sock_path).await.unwrap();
         let result2 = query_status(&sock_path).await.unwrap();
@@ -174,8 +176,9 @@ mod tests {
         // Create a regular file at the socket path
         std::fs::write(&sock_path, "stale").unwrap();
         let report = GatewayStatusReport { providers: vec![] };
+        let (_tx, rx) = tokio::sync::watch::channel(report.clone());
         // Should succeed despite stale file
-        let _handle = start_status_listener(sock_path.clone(), report.clone());
+        let _handle = start_status_listener(sock_path.clone(), rx);
         let result = query_status(&sock_path).await.unwrap();
         assert_eq!(result, report);
     }
@@ -202,8 +205,28 @@ mod tests {
     #[tokio::test]
     async fn listener_returns_none_on_bind_failure() {
         // Try to bind to a path in a nonexistent directory
-        let result = start_status_listener("/nonexistent/dir/test.sock".into(), sample_report());
+        let (_tx, rx) = tokio::sync::watch::channel(sample_report());
+        let result = start_status_listener("/nonexistent/dir/test.sock".into(), rx);
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn listener_reflects_updated_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("watch.sock");
+        let initial = GatewayStatusReport { providers: vec![] };
+        let (tx, rx) = tokio::sync::watch::channel(initial.clone());
+
+        let _handle = start_status_listener(sock_path.clone(), rx);
+
+        let result = query_status(&sock_path).await.unwrap();
+        assert_eq!(result, initial);
+
+        let updated = sample_report();
+        tx.send(updated.clone()).unwrap();
+
+        let result = query_status(&sock_path).await.unwrap();
+        assert_eq!(result, updated);
     }
 
     #[tokio::test]
