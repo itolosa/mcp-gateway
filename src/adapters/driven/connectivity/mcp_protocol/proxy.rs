@@ -104,13 +104,25 @@ pub async fn serve_proxy_http<H: rmcp::ServerHandler + 'static>(
     serve_proxy_http_on_listener(handler, listener, ct, log_sender).await
 }
 
-pub fn spawn_transport(config: &StdioConfig) -> Result<TokioChildProcess, ProxyError> {
+pub fn spawn_transport(
+    config: &StdioConfig,
+    inherit_stderr: bool,
+) -> Result<TokioChildProcess, ProxyError> {
     let mut cmd = tokio::process::Command::new(&config.command);
     cmd.args(&config.args);
     for (key, value) in &config.env {
         cmd.env(key, value);
     }
-    TokioChildProcess::new(cmd).map_err(|e| ProxyError::UpstreamSpawn { source: e })
+    let stderr = if inherit_stderr {
+        std::process::Stdio::inherit()
+    } else {
+        std::process::Stdio::null()
+    };
+    let (process, _) = TokioChildProcess::builder(cmd)
+        .stderr(stderr)
+        .spawn()
+        .map_err(|e| ProxyError::UpstreamSpawn { source: e })?;
+    Ok(process)
 }
 
 pub fn create_http_transport(
@@ -182,7 +194,7 @@ mod tests {
             allowed_operations: vec![],
             denied_operations: vec![],
         };
-        let result = spawn_transport(&config);
+        let result = spawn_transport(&config, false);
         assert!(matches!(result, Err(ProxyError::UpstreamSpawn { .. })));
     }
 
@@ -250,7 +262,7 @@ mod tests {
             allowed_operations: vec![],
             denied_operations: vec![],
         };
-        let result = spawn_transport(&config);
+        let result = spawn_transport(&config, true);
         assert!(result.is_ok());
     }
 
