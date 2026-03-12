@@ -53,6 +53,9 @@ pub struct StopArgs {
     /// Port of the instance to stop (prompts if multiple running)
     #[arg(long, short)]
     pub port: Option<u16>,
+    /// Stop all running instances
+    #[arg(long, short)]
+    pub all: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -485,7 +488,7 @@ mod tests {
         let cli = Cli::try_parse_from(["mcp-gateway", "stop"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Stop(ref args)) if args.port.is_none()
+            Some(Command::Stop(ref args)) if args.port.is_none() && !args.all
         ));
     }
 
@@ -494,7 +497,25 @@ mod tests {
         let cli = Cli::try_parse_from(["mcp-gateway", "stop", "--port", "9090"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Stop(ref args)) if args.port == Some(9090)
+            Some(Command::Stop(ref args)) if args.port == Some(9090) && !args.all
+        ));
+    }
+
+    #[test]
+    fn parses_stop_all() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "stop", "--all"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Stop(ref args)) if args.all && args.port.is_none()
+        ));
+    }
+
+    #[test]
+    fn parses_stop_all_short() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "stop", "-a"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Stop(ref args)) if args.all
         ));
     }
 

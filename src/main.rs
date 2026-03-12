@@ -112,7 +112,7 @@ async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + Confi
                 .await
                 .map_err(|e| e.to_string())
         }
-        Some(Command::Stop(args)) => dispatch_stop(args.port).map_err(|e| e.to_string()),
+        Some(Command::Stop(args)) => dispatch_stop(args.port, args.all).map_err(|e| e.to_string()),
         Some(Command::Status(args)) => dispatch_status(args.port).await.map_err(|e| e.to_string()),
         Some(Command::Restart(args)) => {
             dispatch_restart(config_path, args.port).map_err(|e| e.to_string())
@@ -228,9 +228,39 @@ async fn dispatch_start<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigS
     }
 }
 
-fn dispatch_stop(port_arg: Option<u16>) -> Result<(), DaemonError> {
+fn dispatch_stop(port_arg: Option<u16>, all: bool) -> Result<(), DaemonError> {
     let run_dir = pid::default_run_dir().unwrap_or_default();
     let instances = pid::list_instances(&run_dir)?;
+    if all {
+        if instances.is_empty() {
+            return Err(DaemonError::NotRunning);
+        }
+        eprintln!("Stop all {} running instances?", instances.len());
+        for instance in &instances {
+            let label = match instance.port {
+                Some(p) => format!("{} port {p}", instance.transport),
+                None => instance.transport.clone(),
+            };
+            eprintln!("  {} (PID {})", label, instance.pid);
+        }
+        eprint!("Confirm [y/N]: ");
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| DaemonError::UserInput(format!("failed to read input: {e}")))?;
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            tracing::info!("aborted");
+            return Ok(());
+        }
+        for instance in &instances {
+            let _ = pid::stop_instance(&run_dir, instance.pid);
+            match instance.port {
+                Some(p) => tracing::info!("gateway on port {p} stopped"),
+                None => tracing::info!("gateway (PID {}) stopped", instance.pid),
+            }
+        }
+        return Ok(());
+    }
     let instance = resolve_instance(port_arg, &instances)?;
     pid::stop_instance(&run_dir, instance.pid)?;
     match instance.port {
