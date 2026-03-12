@@ -305,10 +305,6 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
     let transport_str = transport_label(&transport).to_string();
     let is_http = transport == DownstreamTransport::Http;
     run_run(registry, |servers| async move {
-        let (upstreams, statuses) = build_upstreams(servers).await?;
-        let report = GatewayStatusReport {
-            providers: statuses,
-        };
         let run_dir = pid::ensure_run_dir().map_err(|e| ProxyError::UpstreamInit {
             message: e.to_string(),
         })?;
@@ -321,6 +317,10 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
         pid::write_instance(&run_dir, &instance_info).map_err(|e| ProxyError::UpstreamInit {
             message: e.to_string(),
         })?;
+        let (upstreams, statuses) = build_upstreams(servers).await?;
+        let report = GatewayStatusReport {
+            providers: statuses,
+        };
         let sock_path = pid::sock_path(&run_dir, own_pid);
         let _status_handle = status_socket::start_status_listener(sock_path.clone(), report);
         let result = if has_cli_tools {
