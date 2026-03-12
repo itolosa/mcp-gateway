@@ -516,7 +516,7 @@ fn stop_when_not_running_prints_error() {
         .arg("stop")
         .assert()
         .failure()
-        .stderr(contains("not running"));
+        .stderr(contains("no gateway instance found"));
 }
 
 #[test]
@@ -538,7 +538,7 @@ fn attach_when_not_running_prints_error() {
         .arg("attach")
         .assert()
         .failure()
-        .stderr(contains("not running"));
+        .stderr(contains("no gateway instance found"));
 }
 
 #[test]

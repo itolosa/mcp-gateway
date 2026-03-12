@@ -153,7 +153,10 @@ fn dispatch_denylist<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
 
 fn check_single_instance(instances: &[pid::InstanceInfo]) -> Result<(), DaemonError> {
     if let Some(first) = instances.first() {
-        return Err(DaemonError::AlreadyRunning { pid: first.pid });
+        return Err(DaemonError::AlreadyRunning {
+            pid: first.pid,
+            port: first.port.unwrap_or(0),
+        });
     }
     Ok(())
 }
@@ -348,7 +351,10 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
         let instances = pid::list_instances(&run_dir).unwrap_or_default();
         if let Some(first) = instances.first() {
             return Err(ProxyError::UpstreamInit {
-                message: format!("single-instance mode: already running (PID {})", first.pid),
+                message: format!(
+                    "single-instance mode: gateway already running (PID {}), use 'stop' first",
+                    first.pid
+                ),
             });
         }
     }
@@ -583,7 +589,10 @@ fn start_daemon(config_path: &std::path::Path, port: u16) -> Result<(), DaemonEr
     // Check if any existing instance already uses this port
     let instances = pid::list_instances(&run_dir)?;
     if let Some(existing) = instances.iter().find(|i| i.port == Some(port)) {
-        return Err(DaemonError::AlreadyRunning { pid: existing.pid });
+        return Err(DaemonError::AlreadyRunning {
+            pid: existing.pid,
+            port,
+        });
     }
     check_port_available(port)?;
     let child = spawn_daemon_process(config_path, port)?;
