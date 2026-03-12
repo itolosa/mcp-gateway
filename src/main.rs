@@ -46,7 +46,7 @@ async fn main() {
     let default_filter = if cli.verbose {
         "info"
     } else {
-        "mcp_gateway=info,warn"
+        "mcp_gateway=info"
     };
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
@@ -400,6 +400,10 @@ async fn build_upstreams(
 > {
     let mut upstreams = BTreeMap::new();
     let mut statuses = Vec::new();
+    let total = servers.len();
+    if total > 0 {
+        eprintln!("Connecting to {total} servers...");
+    }
     for (name, entry) in servers {
         let (provider_type, target) = describe_server_entry(&entry);
         let provider_type = provider_type.to_string();
@@ -413,16 +417,17 @@ async fn build_upstreams(
                 statuses.push(ProviderStatus {
                     name: name.clone(),
                     connected: true,
-                    provider_type,
+                    provider_type: provider_type.clone(),
                     target,
                 });
                 upstreams.insert(
-                    name,
+                    name.clone(),
                     ProviderHandle {
                         client: RmcpProviderClient::new(service),
                         filter,
                     },
                 );
+                eprintln!("  \u{2714} {name} ({provider_type})");
             }
             Err(e) => {
                 statuses.push(ProviderStatus {
@@ -431,9 +436,20 @@ async fn build_upstreams(
                     provider_type,
                     target,
                 });
-                eprintln!("'{name}' failed to connect: {e}, skipping");
+                let reason = match &e {
+                    ProxyError::UpstreamInit { message } => message
+                        .strip_prefix(&format!("{name}: "))
+                        .unwrap_or(message)
+                        .to_string(),
+                    other => other.to_string(),
+                };
+                eprintln!("  \u{2718} {name} \u{2014} {}", simplify_error(&reason));
             }
         }
+    }
+    let connected = upstreams.len();
+    if total > 0 {
+        eprintln!("Ready ({connected}/{total} connected)");
     }
     Ok((upstreams, statuses))
 }
@@ -726,4 +742,13 @@ async fn connect_upstream_inner(
             }
         }
     }
+}
+
+fn simplify_error(msg: &str) -> String {
+    // Strip verbose rmcp Transport type paths:
+    // "Send message error Transport [...] error: Auth error: X" → "Auth error: X"
+    if let Some(pos) = msg.find("] error: ") {
+        return msg[pos + "] error: ".len()..].to_string();
+    }
+    msg.to_string()
 }
