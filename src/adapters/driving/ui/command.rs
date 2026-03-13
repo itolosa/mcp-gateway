@@ -46,6 +46,8 @@ pub enum Command {
     Logs(LogsArgs),
     /// Manage OAuth authentication for upstream servers
     Oauth(OAuthArgs),
+    /// Show tool filtering rules for all servers
+    Tools(ToolsArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -138,6 +140,12 @@ pub struct OAuthClearArgs {
     /// Skip confirmation prompt when clearing all credentials
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct ToolsArgs {
+    /// Name of a specific server to inspect (shows all if omitted)
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -781,6 +789,24 @@ mod tests {
             Some(Command::Oauth(OAuthArgs {
                 action: OAuthAction::Clear(ref args),
             })) if args.name.as_deref() == Some("my-server") && args.force
+        ));
+    }
+
+    #[test]
+    fn parses_tools_no_args() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "tools"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Tools(ref args)) if args.name.is_none()
+        ));
+    }
+
+    #[test]
+    fn parses_tools_with_server_name() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "tools", "my-server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Tools(ref args)) if args.name.as_deref() == Some("my-server")
         ));
     }
 

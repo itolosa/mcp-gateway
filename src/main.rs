@@ -29,7 +29,7 @@ use mcp_gateway::adapters::driving::ui::command::{
 };
 use mcp_gateway::adapters::driving::ui::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
-    run_denylist_remove, run_denylist_show, run_list, run_remove, run_run,
+    run_denylist_remove, run_denylist_show, run_list, run_remove, run_run, run_tools,
 };
 use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistPolicy;
 use mcp_gateway::hexagon::entities::policy::compound::CompoundPolicy;
@@ -122,6 +122,9 @@ async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + Confi
         Some(Command::Oauth(args)) => dispatch_oauth(registry, args)
             .await
             .map_err(|e| e.to_string()),
+        Some(Command::Tools(args)) => {
+            run_tools(registry, args, &mut std::io::stdout()).map_err(|e| e.to_string())
+        }
     }
 }
 
