@@ -63,6 +63,13 @@ where
         config,
     );
     let router = axum::Router::new()
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth_metadata_handler),
+        )
+        .route("/register", axum::routing::post(register_handler))
+        .route("/authorize", get(authorize_handler))
+        .route("/token", axum::routing::post(token_handler))
         .route("/logs", get(logs_handler))
         .with_state(log_sender)
         .nest_service("/mcp", service);
@@ -70,6 +77,71 @@ where
         .with_graceful_shutdown(ct.cancelled_owned())
         .await
         .map_err(downstream_init_err)
+}
+
+async fn oauth_metadata_handler(
+    request: axum::extract::Request,
+) -> axum::response::Json<serde_json::Value> {
+    let host = request
+        .headers()
+        .get("x-forwarded-host")
+        .or_else(|| request.headers().get("host"))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let base = if host.contains("localhost") || host.starts_with("127.0.0.1") {
+        format!(
+            "http://host.docker.internal:{}",
+            host.split(':').next_back().unwrap_or("8080")
+        )
+    } else {
+        format!("http://{host}")
+    };
+    axum::response::Json(serde_json::json!({
+        "issuer": base,
+        "authorization_endpoint": format!("{base}/authorize"),
+        "token_endpoint": format!("{base}/token"),
+        "registration_endpoint": format!("{base}/register"),
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "code_challenge_methods_supported": ["S256"]
+    }))
+}
+
+async fn register_handler(
+    body: axum::extract::Json<serde_json::Value>,
+) -> axum::response::Json<serde_json::Value> {
+    let client_name = body
+        .get("client_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mcp-client");
+    let redirect_uris = body
+        .get("redirect_uris")
+        .cloned()
+        .unwrap_or(serde_json::json!([]));
+    axum::response::Json(serde_json::json!({
+        "client_id": format!("{client_name}-local"),
+        "client_secret": "not-a-secret",
+        "redirect_uris": redirect_uris,
+        "token_endpoint_auth_method": "none"
+    }))
+}
+
+async fn authorize_handler(
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Redirect {
+    let redirect_uri = query.get("redirect_uri").cloned().unwrap_or_default();
+    let state = query.get("state").cloned().unwrap_or_default();
+    let redirect = format!("{redirect_uri}?code=local-grant&state={state}");
+    axum::response::Redirect::temporary(&redirect)
+}
+
+async fn token_handler() -> axum::response::Json<serde_json::Value> {
+    axum::response::Json(serde_json::json!({
+        "access_token": "mcp-gateway-local",
+        "token_type": "Bearer",
+        "expires_in": 86400
+    }))
 }
 
 async fn logs_handler(
@@ -658,5 +730,181 @@ mod tests {
         let err = downstream_init_err("test error");
         assert!(matches!(err, ProxyError::DownstreamInit { .. }));
         assert!(err.to_string().contains("test error"));
+    }
+
+    async fn start_oauth_server() -> (u16, CancellationToken, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let router = axum::Router::new()
+            .route(
+                "/.well-known/oauth-authorization-server",
+                get(oauth_metadata_handler),
+            )
+            .route("/register", axum::routing::post(register_handler))
+            .route("/authorize", get(authorize_handler))
+            .route("/token", axum::routing::post(token_handler));
+        let ct = CancellationToken::new();
+        let ct_inner = ct.clone();
+        let handle = tokio::spawn(async move {
+            tokio::select! {
+                result = axum::serve(listener, router) => { let _ = result; }
+                () = ct_inner.cancelled() => {}
+            }
+        });
+        (port, ct, handle)
+    }
+
+    #[tokio::test]
+    async fn oauth_metadata_returns_endpoints_for_remote_host() {
+        let (port, ct, handle) = start_oauth_server().await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!(
+                "http://127.0.0.1:{port}/.well-known/oauth-authorization-server"
+            ))
+            .header("host", "myhost:9999")
+            .send()
+            .await
+            .unwrap();
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["issuer"], "http://myhost:9999");
+        assert_eq!(body["token_endpoint"], "http://myhost:9999/token");
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn oauth_metadata_rewrites_localhost_to_docker_host() {
+        let (port, ct, handle) = start_oauth_server().await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!(
+                "http://127.0.0.1:{port}/.well-known/oauth-authorization-server"
+            ))
+            .header("host", "localhost:8080")
+            .send()
+            .await
+            .unwrap();
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["issuer"], "http://host.docker.internal:8080");
+        assert_eq!(
+            body["authorization_endpoint"],
+            "http://host.docker.internal:8080/authorize"
+        );
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn oauth_metadata_rewrites_127_to_docker_host() {
+        let (port, ct, handle) = start_oauth_server().await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!(
+                "http://127.0.0.1:{port}/.well-known/oauth-authorization-server"
+            ))
+            .header("host", "127.0.0.1:8080")
+            .send()
+            .await
+            .unwrap();
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert!(body["issuer"]
+            .as_str()
+            .unwrap()
+            .contains("host.docker.internal"));
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn register_handler_returns_client_credentials() {
+        let (port, ct, handle) = start_oauth_server().await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://127.0.0.1:{port}/register"))
+            .json(&serde_json::json!({
+                "client_name": "test-app",
+                "redirect_uris": ["http://localhost:9876/callback"]
+            }))
+            .send()
+            .await
+            .unwrap();
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["client_id"], "test-app-local");
+        assert_eq!(body["token_endpoint_auth_method"], "none");
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn register_handler_defaults_client_name() {
+        let (port, ct, handle) = start_oauth_server().await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://127.0.0.1:{port}/register"))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["client_id"], "mcp-client-local");
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn authorize_handler_redirects_with_code() {
+        let (port, ct, handle) = start_oauth_server().await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let resp = client
+            .get(format!(
+                "http://127.0.0.1:{port}/authorize?redirect_uri=http://localhost:9876/callback&state=abc123"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 307);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.contains("code=local-grant"));
+        assert!(location.contains("state=abc123"));
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn authorize_handler_defaults_empty_params() {
+        let (port, ct, handle) = start_oauth_server().await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let resp = client
+            .get(format!("http://127.0.0.1:{port}/authorize"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 307);
+        ct.cancel();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn token_handler_returns_bearer_token() {
+        let (port, ct, handle) = start_oauth_server().await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://127.0.0.1:{port}/token"))
+            .send()
+            .await
+            .unwrap();
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["access_token"], "mcp-gateway-local");
+        assert_eq!(body["token_type"], "Bearer");
+        assert_eq!(body["expires_in"], 86400);
+        ct.cancel();
+        let _ = handle.await;
     }
 }
