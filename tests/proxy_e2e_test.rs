@@ -391,8 +391,9 @@ mod proxy_http_negative {
     }
 }
 
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 mod proxy_e2e {
+    use rmcp::model::{GetPromptRequestParams, ReadResourceRequestParams, ResourceContents};
     use rmcp::transport::child_process::TokioChildProcess;
     use rmcp::ServiceExt;
 
@@ -470,5 +471,60 @@ mod proxy_e2e {
         let info = client.peer_info().unwrap();
         assert_eq!(info.server_info.name, "mcp-gateway");
         assert!(info.capabilities.tools.is_some());
+    }
+
+    #[tokio::test]
+    async fn proxy_e2e_forwards_list_resources() {
+        let (client, _dir) = spawn_gateway_proxy().await;
+
+        let result = client.list_resources(None).await.unwrap();
+        assert_eq!(result.resources.len(), 1);
+        assert_eq!(result.resources[0].uri, "echo__file:///hello.txt");
+        assert_eq!(result.resources[0].name, "echo__hello.txt");
+    }
+
+    #[tokio::test]
+    async fn proxy_e2e_forwards_list_resource_templates() {
+        let (client, _dir) = spawn_gateway_proxy().await;
+
+        let result = client.list_resource_templates(None).await.unwrap();
+        assert_eq!(result.resource_templates.len(), 1);
+        assert_eq!(
+            result.resource_templates[0].uri_template,
+            "echo__file:///{path}"
+        );
+    }
+
+    #[tokio::test]
+    async fn proxy_e2e_forwards_read_resource() {
+        let (client, _dir) = spawn_gateway_proxy().await;
+
+        let params = ReadResourceRequestParams::new("echo__file:///hello.txt");
+        let result = client.read_resource(params).await.unwrap();
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents { text, .. } => {
+                assert!(text.contains("content of"));
+            }
+            _ => panic!("expected text resource contents"),
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_e2e_forwards_list_prompts() {
+        let (client, _dir) = spawn_gateway_proxy().await;
+
+        let result = client.list_prompts(None).await.unwrap();
+        assert_eq!(result.prompts.len(), 1);
+        assert_eq!(result.prompts[0].name, "echo__greet");
+    }
+
+    #[tokio::test]
+    async fn proxy_e2e_forwards_get_prompt() {
+        let (client, _dir) = spawn_gateway_proxy().await;
+
+        let params = GetPromptRequestParams::new("echo__greet");
+        let result = client.get_prompt(params).await.unwrap();
+        assert!(!result.messages.is_empty());
     }
 }

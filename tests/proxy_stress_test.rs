@@ -1,4 +1,9 @@
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod proxy_stress {
     use std::collections::BTreeMap;
     use std::time::Duration;
@@ -15,8 +20,12 @@ mod proxy_stress {
     use mcp_gateway::hexagon::entities::policy::denylist::DenylistPolicy;
     use mcp_gateway::hexagon::usecases::gateway::{Gateway, ProviderHandle};
     use rmcp::model::{
-        CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, ListToolsResult,
-        PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+        Annotated, CallToolRequestParams, CallToolResult, Content, ErrorData,
+        GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+        Prompt, PromptMessage, PromptMessageRole, RawResource, RawResourceTemplate,
+        ReadResourceRequestParams, ReadResourceResult, ResourceContents, ServerCapabilities,
+        ServerInfo, Tool,
     };
     use rmcp::service::{RequestContext, RoleClient, RunningService};
     use rmcp::{RoleServer, ServerHandler, ServiceExt};
@@ -27,8 +36,14 @@ mod proxy_stress {
 
     impl ServerHandler for EchoServer {
         fn get_info(&self) -> ServerInfo {
-            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-                .with_server_info(Implementation::new("echo-stress", "0.1.0"))
+            ServerInfo::new(
+                ServerCapabilities::builder()
+                    .enable_tools()
+                    .enable_resources()
+                    .enable_prompts()
+                    .build(),
+            )
+            .with_server_info(Implementation::new("echo-stress", "0.1.0"))
         }
 
         async fn list_tools(
@@ -69,6 +84,70 @@ mod proxy_stress {
                     None,
                 ))
             }
+        }
+
+        async fn list_resources(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            _context: RequestContext<RoleServer>,
+        ) -> Result<ListResourcesResult, ErrorData> {
+            Ok(ListResourcesResult::with_all_items(vec![Annotated::new(
+                RawResource::new("file:///hello.txt", "hello.txt"),
+                None,
+            )]))
+        }
+
+        async fn list_resource_templates(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            _context: RequestContext<RoleServer>,
+        ) -> Result<ListResourceTemplatesResult, ErrorData> {
+            let template = RawResourceTemplate {
+                uri_template: "file:///{path}".to_string(),
+                name: "file-template".to_string(),
+                title: None,
+                description: None,
+                mime_type: None,
+                icons: None,
+            };
+            Ok(ListResourceTemplatesResult::with_all_items(vec![
+                Annotated::new(template, None),
+            ]))
+        }
+
+        async fn read_resource(
+            &self,
+            request: ReadResourceRequestParams,
+            _context: RequestContext<RoleServer>,
+        ) -> Result<ReadResourceResult, ErrorData> {
+            Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                format!("content of {}", request.uri),
+                request.uri.clone(),
+            )]))
+        }
+
+        async fn list_prompts(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            _context: RequestContext<RoleServer>,
+        ) -> Result<ListPromptsResult, ErrorData> {
+            Ok(ListPromptsResult::with_all_items(vec![Prompt::new(
+                "greet",
+                Some("A greeting prompt"),
+                None,
+            )]))
+        }
+
+        async fn get_prompt(
+            &self,
+            request: GetPromptRequestParams,
+            _context: RequestContext<RoleServer>,
+        ) -> Result<GetPromptResult, ErrorData> {
+            Ok(GetPromptResult::new(vec![PromptMessage::new_text(
+                PromptMessageRole::Assistant,
+                format!("Hello from {}", request.name),
+            )])
+            .with_description(format!("Prompt: {}", request.name)))
         }
     }
 
@@ -666,6 +745,121 @@ mod proxy_stress {
             .call_tool(CallToolRequestParams::new("unknown__tool"))
             .await;
         assert!(result.is_err());
+
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    // ── Group 7: Resources & Prompts ─────────────────────────────────
+
+    #[tokio::test]
+    async fn list_resources_returns_prefixed_resources() {
+        let (client, upstream_h, proxy_h) = setup_proxy().await;
+
+        let result = client.list_resources(None).await.unwrap();
+        assert_eq!(result.resources.len(), 1);
+        assert_eq!(result.resources[0].uri, "srv__file:///hello.txt");
+        assert_eq!(result.resources[0].name, "srv__hello.txt");
+
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn list_resource_templates_returns_prefixed_templates() {
+        let (client, upstream_h, proxy_h) = setup_proxy().await;
+
+        let result = client.list_resource_templates(None).await.unwrap();
+        assert_eq!(result.resource_templates.len(), 1);
+        assert_eq!(
+            result.resource_templates[0].uri_template,
+            "srv__file:///{path}"
+        );
+        assert_eq!(result.resource_templates[0].name, "srv__file-template");
+
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn read_resource_forwards_to_upstream() {
+        let (client, upstream_h, proxy_h) = setup_proxy().await;
+
+        let params = ReadResourceRequestParams::new("srv__file:///hello.txt");
+        let result = client.read_resource(params).await.unwrap();
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents { text, uri, .. } => {
+                assert_eq!(uri, "file:///hello.txt");
+                assert!(text.contains("content of"));
+            }
+            _ => panic!("expected text resource contents"),
+        }
+
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn list_prompts_returns_prefixed_prompts() {
+        let (client, upstream_h, proxy_h) = setup_proxy().await;
+
+        let result = client.list_prompts(None).await.unwrap();
+        assert_eq!(result.prompts.len(), 1);
+        assert_eq!(result.prompts[0].name, "srv__greet");
+
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn get_prompt_forwards_to_upstream() {
+        let (client, upstream_h, proxy_h) = setup_proxy().await;
+
+        let params = GetPromptRequestParams::new("srv__greet");
+        let result = client.get_prompt(params).await.unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert!(result
+            .description
+            .as_ref()
+            .unwrap()
+            .contains("Prompt: greet"));
+
+        drop(client);
+        let _ = proxy_h.await;
+        let _ = upstream_h.await;
+    }
+
+    #[tokio::test]
+    async fn resources_and_prompts_with_timeout_succeed() {
+        let (client, upstream_h, proxy_h) =
+            setup_proxy_with_timeout(EchoServer, Some(Duration::from_secs(5))).await;
+
+        let resources = client.list_resources(None).await.unwrap();
+        assert_eq!(resources.resources.len(), 1);
+
+        let templates = client.list_resource_templates(None).await.unwrap();
+        assert_eq!(templates.resource_templates.len(), 1);
+
+        let read = client
+            .read_resource(ReadResourceRequestParams::new("srv__file:///hello.txt"))
+            .await
+            .unwrap();
+        assert_eq!(read.contents.len(), 1);
+
+        let prompts = client.list_prompts(None).await.unwrap();
+        assert_eq!(prompts.prompts.len(), 1);
+
+        let prompt = client
+            .get_prompt(GetPromptRequestParams::new("srv__greet"))
+            .await
+            .unwrap();
+        assert_eq!(prompt.messages.len(), 1);
 
         drop(client);
         let _ = proxy_h.await;

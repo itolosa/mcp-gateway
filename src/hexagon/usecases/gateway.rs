@@ -2,10 +2,16 @@ use std::collections::BTreeMap;
 
 use crate::hexagon::ports::{
     CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
-    OperationDescriptor, OperationPolicy, ProviderClient,
+    OperationDescriptor, OperationPolicy, PromptDescriptor, PromptGetRequest, PromptGetResult,
+    ProviderClient, ResourceDescriptor, ResourceReadRequest, ResourceReadResult,
+    ResourceTemplateDescriptor,
 };
 
+use super::get_prompt::GetPrompt;
 use super::list_operations::ListOperations;
+use super::list_prompts::ListPrompts;
+use super::list_resources::{ListResourceTemplates, ListResources};
+use super::read_resource::ReadResource;
 use super::route_operation::RouteOperation;
 
 pub struct ProviderHandle<U, F> {
@@ -36,6 +42,34 @@ impl<U: ProviderClient, C: CliOperationRunner, F: OperationPolicy> Gateway<U, C,
     ) -> Result<OperationCallResult, GatewayError> {
         RouteOperation::execute(&self.providers, &self.cli_runner, request).await
     }
+
+    pub async fn list_resources(&self) -> Result<Vec<ResourceDescriptor>, GatewayError> {
+        ListResources::execute(&self.providers).await
+    }
+
+    pub async fn list_resource_templates(
+        &self,
+    ) -> Result<Vec<ResourceTemplateDescriptor>, GatewayError> {
+        ListResourceTemplates::execute(&self.providers).await
+    }
+
+    pub async fn read_resource(
+        &self,
+        request: ResourceReadRequest,
+    ) -> Result<ResourceReadResult, GatewayError> {
+        ReadResource::execute(&self.providers, request).await
+    }
+
+    pub async fn list_prompts(&self) -> Result<Vec<PromptDescriptor>, GatewayError> {
+        ListPrompts::execute(&self.providers).await
+    }
+
+    pub async fn get_prompt(
+        &self,
+        request: PromptGetRequest,
+    ) -> Result<PromptGetResult, GatewayError> {
+        GetPrompt::execute(&self.providers, request).await
+    }
 }
 
 #[cfg(test)]
@@ -48,7 +82,9 @@ pub(crate) mod test_helpers {
     use crate::hexagon::entities::policy::denylist::DenylistPolicy;
     use crate::hexagon::ports::{
         CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
-        OperationDescriptor, ProviderClient, ProviderError,
+        OperationDescriptor, PromptDescriptor, PromptGetRequest, PromptGetResult, ProviderClient,
+        ProviderError, ResourceDescriptor, ResourceReadRequest, ResourceReadResult,
+        ResourceTemplateDescriptor,
     };
 
     use super::ProviderHandle;
@@ -82,6 +118,34 @@ pub(crate) mod test_helpers {
                 )))
             }
         }
+
+        async fn list_resources(&self) -> Result<Vec<ResourceDescriptor>, ProviderError> {
+            Ok(vec![])
+        }
+        async fn list_resource_templates(
+            &self,
+        ) -> Result<Vec<ResourceTemplateDescriptor>, ProviderError> {
+            Ok(vec![])
+        }
+        async fn read_resource(
+            &self,
+            request: ResourceReadRequest,
+        ) -> Result<ResourceReadResult, ProviderError> {
+            Ok(ResourceReadResult {
+                json: format!(r#"{{"uri":"{}"}}"#, request.uri),
+            })
+        }
+        async fn list_prompts(&self) -> Result<Vec<PromptDescriptor>, ProviderError> {
+            Ok(vec![])
+        }
+        async fn get_prompt(
+            &self,
+            request: PromptGetRequest,
+        ) -> Result<PromptGetResult, ProviderError> {
+            Ok(PromptGetResult {
+                json: format!(r#"{{"name":"{}"}}"#, request.name),
+            })
+        }
     }
 
     pub(crate) struct MockServerB;
@@ -112,6 +176,34 @@ pub(crate) mod test_helpers {
                 )))
             }
         }
+
+        async fn list_resources(&self) -> Result<Vec<ResourceDescriptor>, ProviderError> {
+            Ok(vec![])
+        }
+        async fn list_resource_templates(
+            &self,
+        ) -> Result<Vec<ResourceTemplateDescriptor>, ProviderError> {
+            Ok(vec![])
+        }
+        async fn read_resource(
+            &self,
+            request: ResourceReadRequest,
+        ) -> Result<ResourceReadResult, ProviderError> {
+            Ok(ResourceReadResult {
+                json: format!(r#"{{"uri":"{}"}}"#, request.uri),
+            })
+        }
+        async fn list_prompts(&self) -> Result<Vec<PromptDescriptor>, ProviderError> {
+            Ok(vec![])
+        }
+        async fn get_prompt(
+            &self,
+            request: PromptGetRequest,
+        ) -> Result<PromptGetResult, ProviderError> {
+            Ok(PromptGetResult {
+                json: format!(r#"{{"name":"{}"}}"#, request.name),
+            })
+        }
     }
 
     pub(crate) struct DualMockServer {
@@ -135,6 +227,50 @@ pub(crate) mod test_helpers {
                 MockServerA.call_operation(request).await
             } else {
                 MockServerB.call_operation(request).await
+            }
+        }
+
+        async fn list_resources(&self) -> Result<Vec<ResourceDescriptor>, ProviderError> {
+            if self.server_name == "alpha" {
+                MockServerA.list_resources().await
+            } else {
+                MockServerB.list_resources().await
+            }
+        }
+        async fn list_resource_templates(
+            &self,
+        ) -> Result<Vec<ResourceTemplateDescriptor>, ProviderError> {
+            if self.server_name == "alpha" {
+                MockServerA.list_resource_templates().await
+            } else {
+                MockServerB.list_resource_templates().await
+            }
+        }
+        async fn read_resource(
+            &self,
+            request: ResourceReadRequest,
+        ) -> Result<ResourceReadResult, ProviderError> {
+            if self.server_name == "alpha" {
+                MockServerA.read_resource(request).await
+            } else {
+                MockServerB.read_resource(request).await
+            }
+        }
+        async fn list_prompts(&self) -> Result<Vec<PromptDescriptor>, ProviderError> {
+            if self.server_name == "alpha" {
+                MockServerA.list_prompts().await
+            } else {
+                MockServerB.list_prompts().await
+            }
+        }
+        async fn get_prompt(
+            &self,
+            request: PromptGetRequest,
+        ) -> Result<PromptGetResult, ProviderError> {
+            if self.server_name == "alpha" {
+                MockServerA.get_prompt(request).await
+            } else {
+                MockServerB.get_prompt(request).await
             }
         }
     }
@@ -195,6 +331,63 @@ pub(crate) mod test_helpers {
         }
     }
 
+    pub(crate) struct TestProvider {
+        pub operations: Vec<OperationDescriptor>,
+        pub resources: Vec<ResourceDescriptor>,
+        pub templates: Vec<ResourceTemplateDescriptor>,
+        pub prompts: Vec<PromptDescriptor>,
+    }
+
+    impl TestProvider {
+        pub(crate) fn empty() -> Self {
+            Self {
+                operations: vec![],
+                resources: vec![],
+                templates: vec![],
+                prompts: vec![],
+            }
+        }
+    }
+
+    impl ProviderClient for TestProvider {
+        async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, ProviderError> {
+            Ok(self.operations.clone())
+        }
+        async fn call_operation(
+            &self,
+            _request: OperationCallRequest,
+        ) -> Result<OperationCallResult, ProviderError> {
+            Err(ProviderError::Service("not supported".to_string()))
+        }
+        async fn list_resources(&self) -> Result<Vec<ResourceDescriptor>, ProviderError> {
+            Ok(self.resources.clone())
+        }
+        async fn list_resource_templates(
+            &self,
+        ) -> Result<Vec<ResourceTemplateDescriptor>, ProviderError> {
+            Ok(self.templates.clone())
+        }
+        async fn read_resource(
+            &self,
+            request: ResourceReadRequest,
+        ) -> Result<ResourceReadResult, ProviderError> {
+            Ok(ResourceReadResult {
+                json: format!(r#"{{"uri":"{}"}}"#, request.uri),
+            })
+        }
+        async fn list_prompts(&self) -> Result<Vec<PromptDescriptor>, ProviderError> {
+            Ok(self.prompts.clone())
+        }
+        async fn get_prompt(
+            &self,
+            request: PromptGetRequest,
+        ) -> Result<PromptGetResult, ProviderError> {
+            Ok(PromptGetResult {
+                json: format!(r#"{{"name":"{}"}}"#, request.name),
+            })
+        }
+    }
+
     pub(crate) struct FailingUpstream;
 
     impl ProviderClient for FailingUpstream {
@@ -206,6 +399,30 @@ pub(crate) mod test_helpers {
             &self,
             _request: OperationCallRequest,
         ) -> Result<OperationCallResult, ProviderError> {
+            Err(ProviderError::Service("connection closed".to_string()))
+        }
+
+        async fn list_resources(&self) -> Result<Vec<ResourceDescriptor>, ProviderError> {
+            Err(ProviderError::Service("connection closed".to_string()))
+        }
+        async fn list_resource_templates(
+            &self,
+        ) -> Result<Vec<ResourceTemplateDescriptor>, ProviderError> {
+            Err(ProviderError::Service("connection closed".to_string()))
+        }
+        async fn read_resource(
+            &self,
+            _request: ResourceReadRequest,
+        ) -> Result<ResourceReadResult, ProviderError> {
+            Err(ProviderError::Service("connection closed".to_string()))
+        }
+        async fn list_prompts(&self) -> Result<Vec<PromptDescriptor>, ProviderError> {
+            Err(ProviderError::Service("connection closed".to_string()))
+        }
+        async fn get_prompt(
+            &self,
+            _request: PromptGetRequest,
+        ) -> Result<PromptGetResult, ProviderError> {
             Err(ProviderError::Service("connection closed".to_string()))
         }
     }
@@ -230,6 +447,45 @@ pub(crate) mod test_helpers {
             match self {
                 TestUpstream::Fast(s) => s.call_operation(request).await,
                 TestUpstream::Failing(s) => s.call_operation(request).await,
+            }
+        }
+
+        async fn list_resources(&self) -> Result<Vec<ResourceDescriptor>, ProviderError> {
+            match self {
+                TestUpstream::Fast(s) => s.list_resources().await,
+                TestUpstream::Failing(s) => s.list_resources().await,
+            }
+        }
+        async fn list_resource_templates(
+            &self,
+        ) -> Result<Vec<ResourceTemplateDescriptor>, ProviderError> {
+            match self {
+                TestUpstream::Fast(s) => s.list_resource_templates().await,
+                TestUpstream::Failing(s) => s.list_resource_templates().await,
+            }
+        }
+        async fn read_resource(
+            &self,
+            request: ResourceReadRequest,
+        ) -> Result<ResourceReadResult, ProviderError> {
+            match self {
+                TestUpstream::Fast(s) => s.read_resource(request).await,
+                TestUpstream::Failing(s) => s.read_resource(request).await,
+            }
+        }
+        async fn list_prompts(&self) -> Result<Vec<PromptDescriptor>, ProviderError> {
+            match self {
+                TestUpstream::Fast(s) => s.list_prompts().await,
+                TestUpstream::Failing(s) => s.list_prompts().await,
+            }
+        }
+        async fn get_prompt(
+            &self,
+            request: PromptGetRequest,
+        ) -> Result<PromptGetResult, ProviderError> {
+            match self {
+                TestUpstream::Fast(s) => s.get_prompt(request).await,
+                TestUpstream::Failing(s) => s.get_prompt(request).await,
             }
         }
     }

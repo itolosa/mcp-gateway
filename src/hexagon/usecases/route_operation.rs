@@ -279,4 +279,24 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("no provider prefix"));
     }
+
+    #[tokio::test]
+    async fn call_operation_on_test_provider_returns_error() {
+        let mut upstreams = BTreeMap::new();
+        upstreams.insert(
+            "server".to_string(),
+            ProviderHandle {
+                client: TestProvider::empty(),
+                filter: passthrough_filter(),
+            },
+        );
+        let request = OperationCallRequest {
+            name: "server__anything".to_string(),
+            arguments: None,
+        };
+        let err = RouteOperation::execute(&upstreams, &NullCliRunner, request)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not supported"));
+    }
 }
