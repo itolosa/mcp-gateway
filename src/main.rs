@@ -562,10 +562,32 @@ async fn dispatch_logs(
     args: mcp_gateway::adapters::driving::ui::command::LogsArgs,
 ) -> Result<(), DaemonError> {
     let run_dir = pid::default_run_dir().unwrap_or_default();
+    // Try live instances first
     let instances = pid::list_instances(&run_dir)?;
-    let instance = resolve_instance(args.port, &instances)?;
-    let path = pid::log_path(&run_dir, instance.pid);
-    log_file::read_log(&path, args.follow).await
+    if !instances.is_empty() {
+        let instance = resolve_instance(args.port, &instances)?;
+        let path = pid::log_path(&run_dir, instance.pid);
+        return log_file::read_log(&path, args.follow).await;
+    }
+    // No live instances — look for log files from dead instances
+    let log_path = find_latest_log(&run_dir)?;
+    log_file::read_log(&log_path, args.follow).await
+}
+
+fn find_latest_log(run_dir: &std::path::Path) -> Result<std::path::PathBuf, DaemonError> {
+    let entries = std::fs::read_dir(run_dir).map_err(|_| DaemonError::NotRunning)?;
+    let mut logs: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
+        .collect();
+    logs.sort_by(|a, b| {
+        let t_a = a.metadata().and_then(|m| m.modified()).ok();
+        let t_b = b.metadata().and_then(|m| m.modified()).ok();
+        t_b.cmp(&t_a)
+    });
+    logs.first()
+        .map(|e| e.path())
+        .ok_or(DaemonError::NotRunning)
 }
 
 async fn run_attach(port_override: Option<u16>) -> Result<(), DaemonError> {

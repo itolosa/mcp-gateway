@@ -86,7 +86,7 @@ pub fn list_instances(run_dir: &Path) -> Result<Vec<InstanceInfo>, DaemonError> 
         } else {
             let _ = std::fs::remove_file(&path);
             let _ = std::fs::remove_file(run_dir.join(format!("{pid}.sock")));
-            let _ = std::fs::remove_file(run_dir.join(format!("{pid}.log")));
+            // Log file is intentionally kept for post-mortem diagnosis via `logs`
         }
     }
     instances.sort_by_key(|i| i.pid);
@@ -158,7 +158,7 @@ pub fn remove_pid_file(path: &Path) -> Result<(), DaemonError> {
 pub fn remove_instance(run_dir: &Path, pid: u32) {
     let _ = std::fs::remove_file(instance_path(run_dir, pid));
     let _ = std::fs::remove_file(sock_path(run_dir, pid));
-    let _ = std::fs::remove_file(log_path(run_dir, pid));
+    // Log file is intentionally kept for post-mortem diagnosis via `logs`
 }
 
 pub fn send_signal(pid: u32, signal: &str) -> Result<(), DaemonError> {
@@ -314,12 +314,13 @@ mod tests {
         };
         write_instance(run_dir, &info).unwrap();
         std::fs::write(run_dir.join(format!("{}.sock", u32::MAX)), "").unwrap();
-        std::fs::write(run_dir.join(format!("{}.log", u32::MAX)), "").unwrap();
+        std::fs::write(run_dir.join(format!("{}.log", u32::MAX)), "log data").unwrap();
         let instances = list_instances(run_dir).unwrap();
         assert!(instances.is_empty());
         assert!(!run_dir.join(format!("{}.json", u32::MAX)).exists());
         assert!(!run_dir.join(format!("{}.sock", u32::MAX)).exists());
-        assert!(!run_dir.join(format!("{}.log", u32::MAX)).exists());
+        // Log file is kept for post-mortem diagnosis
+        assert!(run_dir.join(format!("{}.log", u32::MAX)).exists());
     }
 
     #[test]
@@ -419,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_instance_cleans_all_files() {
+    fn remove_instance_cleans_json_and_sock_but_keeps_log() {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
         let info = InstanceInfo {
@@ -429,11 +430,11 @@ mod tests {
         };
         write_instance(run_dir, &info).unwrap();
         std::fs::write(run_dir.join("42.sock"), "").unwrap();
-        std::fs::write(run_dir.join("42.log"), "").unwrap();
+        std::fs::write(run_dir.join("42.log"), "log data").unwrap();
         remove_instance(run_dir, 42);
         assert!(!run_dir.join("42.json").exists());
         assert!(!run_dir.join("42.sock").exists());
-        assert!(!run_dir.join("42.log").exists());
+        assert!(run_dir.join("42.log").exists());
     }
 
     #[test]
