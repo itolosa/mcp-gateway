@@ -215,6 +215,13 @@ pub async fn check_port_available(port: u16) -> Result<(), DaemonError> {
 mod tests {
     use super::*;
 
+    /// A PID that is invalid (above i32::MAX) but does NOT wrap to pid_t -1 on
+    /// Linux.  u32::MAX (4294967295) wraps to pid_t -1, and `kill(-1, sig)`
+    /// sends the signal to **every** process — catastrophic when a cargo-mutants
+    /// `is_valid_pid -> true` mutant bypasses the validation guard.
+    /// 2147483648 wraps to pid_t -2147483648, which simply fails with ESRCH.
+    const DEAD_PID: u32 = i32::MAX as u32 + 1;
+
     #[test]
     fn default_run_dir_returns_some() {
         let path = default_run_dir();
@@ -308,19 +315,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
         let info = InstanceInfo {
-            pid: u32::MAX,
+            pid: DEAD_PID,
             transport: "http".to_string(),
             port: Some(9090),
         };
         write_instance(run_dir, &info).unwrap();
-        std::fs::write(run_dir.join(format!("{}.sock", u32::MAX)), "").unwrap();
-        std::fs::write(run_dir.join(format!("{}.log", u32::MAX)), "log data").unwrap();
+        std::fs::write(run_dir.join(format!("{}.sock", DEAD_PID)), "").unwrap();
+        std::fs::write(run_dir.join(format!("{}.log", DEAD_PID)), "log data").unwrap();
         let instances = list_instances(run_dir).unwrap();
         assert!(instances.is_empty());
-        assert!(!run_dir.join(format!("{}.json", u32::MAX)).exists());
-        assert!(!run_dir.join(format!("{}.sock", u32::MAX)).exists());
+        assert!(!run_dir.join(format!("{}.json", DEAD_PID)).exists());
+        assert!(!run_dir.join(format!("{}.sock", DEAD_PID)).exists());
         // Log file is kept for post-mortem diagnosis
-        assert!(run_dir.join(format!("{}.log", u32::MAX)).exists());
+        assert!(run_dir.join(format!("{}.log", DEAD_PID)).exists());
     }
 
     #[test]
@@ -477,7 +484,7 @@ mod tests {
 
     #[test]
     fn is_process_alive_false_for_max_pid() {
-        assert!(!is_process_alive(u32::MAX));
+        assert!(!is_process_alive(DEAD_PID));
     }
 
     #[test]
@@ -492,7 +499,7 @@ mod tests {
     fn check_already_running_none_when_stale_pid() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stale.pid");
-        write_pid(&path, u32::MAX).unwrap();
+        write_pid(&path, DEAD_PID).unwrap();
         let result = check_already_running(&path).unwrap();
         assert_eq!(result, None);
         assert!(!path.exists());
@@ -560,7 +567,7 @@ mod tests {
 
     #[test]
     fn send_signal_fails_for_invalid_pid() {
-        let result = send_signal(u32::MAX, "0");
+        let result = send_signal(DEAD_PID, "0");
         assert!(matches!(result, Err(DaemonError::SignalFailed { .. })));
     }
 
@@ -569,14 +576,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
         let info = InstanceInfo {
-            pid: u32::MAX,
+            pid: DEAD_PID,
             transport: "http".to_string(),
             port: Some(8080),
         };
         write_instance(run_dir, &info).unwrap();
-        let result = stop_instance(run_dir, u32::MAX);
+        let result = stop_instance(run_dir, DEAD_PID);
         assert!(matches!(result, Err(DaemonError::NotRunning)));
-        assert!(!run_dir.join(format!("{}.json", u32::MAX)).exists());
+        assert!(!run_dir.join(format!("{}.json", DEAD_PID)).exists());
     }
 
     #[test]
@@ -604,7 +611,7 @@ mod tests {
 
     #[test]
     fn wait_for_exit_returns_immediately_for_dead_process() {
-        wait_for_exit(u32::MAX);
+        wait_for_exit(DEAD_PID);
     }
 
     #[test]

@@ -705,8 +705,11 @@ fn status_when_stale_pid_prints_no_instances() {
     let dir = tempfile::tempdir().unwrap_or_else(|_| unreachable!());
     let run_dir = dir.path().join(".mcp-gateway").join("run");
     std::fs::create_dir_all(&run_dir).unwrap_or_else(|_| unreachable!());
-    let instance_path = run_dir.join(format!("{}.json", u32::MAX));
-    let json = format!(r#"{{"pid":{},"transport":"http","port":8080}}"#, u32::MAX);
+    // Use i32::MAX+1 instead of u32::MAX: on Linux u32::MAX wraps to pid_t -1,
+    // and kill(-1, sig) targets every process — dangerous under mutation testing.
+    let stale_pid: u32 = i32::MAX as u32 + 1;
+    let instance_path = run_dir.join(format!("{stale_pid}.json"));
+    let json = format!(r#"{{"pid":{stale_pid},"transport":"http","port":8080}}"#);
     std::fs::write(&instance_path, json).unwrap_or_else(|_| unreachable!());
 
     cargo_bin_cmd!()
