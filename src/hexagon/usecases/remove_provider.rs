@@ -8,14 +8,15 @@ impl RemoveProvider {
         store: &S,
         name: &str,
     ) -> Result<(), RegistryError> {
-        let mut entries = store.load_entries().map_err(RegistryError::Storage)?;
+        let entries = store.load_entries().map_err(RegistryError::Storage)?;
 
-        if entries.remove(name).is_none() {
+        if !entries.contains_key(name) {
             return Err(RegistryError::NotFound {
                 name: name.to_string(),
             });
         }
 
+        let entries = entries.into_iter().filter(|(k, _)| k != name).collect();
         store.save_entries(entries).map_err(RegistryError::Storage)
     }
 }
