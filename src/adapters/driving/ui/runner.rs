@@ -6,7 +6,9 @@ use super::command::{
     AddArgs, AllowlistModifyArgs, AllowlistShowArgs, DenylistModifyArgs, DenylistShowArgs,
     RemoveArgs, RulesArgs, TransportType,
 };
-use crate::adapters::driven::configuration::model::{HttpConfig, McpServerEntry, StdioConfig};
+use crate::adapters::driven::configuration::model::{
+    CliOperationDef, HttpConfig, McpServerEntry, StdioConfig,
+};
 use crate::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
 use crate::hexagon::ports::{OperationPolicy, ProviderClient, ProviderConfigStore};
 use crate::hexagon::usecases::gateway::ProviderHandle;
@@ -15,23 +17,19 @@ use crate::hexagon::usecases::registry_service::RegistryService;
 
 pub fn run_rules<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
+    cli_operations: &BTreeMap<String, CliOperationDef>,
     args: RulesArgs,
     out: &mut impl Write,
 ) -> Result<(), RegistryError> {
     let servers = service.list_providers()?;
-    let entries: Vec<(&str, &McpServerEntry)> = match &args.name {
-        Some(name) => {
-            let entry = servers
-                .get(name.as_str())
-                .ok_or_else(|| RegistryError::NotFound { name: name.clone() })?;
-            vec![(name.as_str(), entry)]
+    let filter_name = args.name.as_deref();
+    let mut printed = false;
+    for (server_name, entry) in &servers {
+        if let Some(name) = filter_name {
+            if name != server_name.as_str() {
+                continue;
+            }
         }
-        None => servers.iter().map(|(k, v)| (k.as_str(), v)).collect(),
-    };
-    if entries.is_empty() {
-        return Ok(());
-    }
-    for (server_name, entry) in &entries {
         let (server_type, target) = describe_entry(entry);
         let allowed = entry.allowed_operations();
         let denied = entry.denied_operations();
@@ -49,6 +47,27 @@ pub fn run_rules<S: ProviderConfigStore<Entry = McpServerEntry>>(
             let _ = writeln!(out, "  (no rules — all upstream tools forwarded)");
         }
         let _ = writeln!(out);
+        printed = true;
+    }
+    for (name, def) in cli_operations {
+        if let Some(filter) = filter_name {
+            if filter != name.as_str() {
+                continue;
+            }
+        }
+        let desc = def.description.as_deref().unwrap_or_else(|| &def.command);
+        let _ = writeln!(out, "{name} (cli → {cmd})", cmd = def.command);
+        let _ = writeln!(out, "  policy: open");
+        let _ = writeln!(out, "  ALLOW  {desc:<40} → {name}");
+        let _ = writeln!(out);
+        printed = true;
+    }
+    if let Some(name) = filter_name {
+        if !printed {
+            return Err(RegistryError::NotFound {
+                name: name.to_string(),
+            });
+        }
     }
     Ok(())
 }
@@ -951,7 +970,7 @@ mod tests {
 
         let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_rules(&service, args, &mut buf).unwrap();
+        run_rules(&service, &BTreeMap::new(), args, &mut buf).unwrap();
         assert!(buf.is_empty());
     }
 
@@ -962,7 +981,7 @@ mod tests {
 
         let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_rules(&service, args, &mut buf).unwrap();
+        run_rules(&service, &BTreeMap::new(), args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("test (stdio"));
         assert!(output.contains("policy: open"));
@@ -987,7 +1006,7 @@ mod tests {
 
         let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_rules(&service, args, &mut buf).unwrap();
+        run_rules(&service, &BTreeMap::new(), args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("policy: allowlist"));
         assert!(output.contains("ALLOW  read"));
@@ -1015,7 +1034,7 @@ mod tests {
 
         let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_rules(&service, args, &mut buf).unwrap();
+        run_rules(&service, &BTreeMap::new(), args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("policy: denylist"));
         assert!(output.contains("DENY   delete"));
@@ -1040,7 +1059,7 @@ mod tests {
 
         let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_rules(&service, args, &mut buf).unwrap();
+        run_rules(&service, &BTreeMap::new(), args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("policy: allowlist + denylist"));
         assert!(output.contains("ALLOW  read"));
@@ -1078,7 +1097,7 @@ mod tests {
             name: Some("alpha".to_string()),
         };
         let mut buf = Vec::new();
-        run_rules(&service, args, &mut buf).unwrap();
+        run_rules(&service, &BTreeMap::new(), args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("alpha"));
         assert!(output.contains("tool_a"));
@@ -1095,7 +1114,7 @@ mod tests {
             name: Some("nope".to_string()),
         };
         let mut buf = Vec::new();
-        let result = run_rules(&service, args, &mut buf);
+        let result = run_rules(&service, &BTreeMap::new(), args, &mut buf);
         assert!(matches!(result, Err(RegistryError::NotFound { .. })));
     }
 
@@ -1104,8 +1123,91 @@ mod tests {
         let service = RegistryService::new(FakeConfigStore::failing());
         let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        let result = run_rules(&service, args, &mut buf);
+        let result = run_rules(&service, &BTreeMap::new(), args, &mut buf);
         assert!(matches!(result, Err(RegistryError::Storage(_))));
+    }
+
+    #[test]
+    fn run_rules_shows_cli_tools() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+        let mut cli = BTreeMap::new();
+        cli.insert(
+            "gh-pr-list".to_string(),
+            CliOperationDef {
+                command: "/scripts/gh-pr-list.sh".to_string(),
+                description: Some("List pull requests".to_string()),
+            },
+        );
+        let args = RulesArgs { name: None };
+        let mut buf = Vec::new();
+        run_rules(&service, &cli, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("gh-pr-list"));
+        assert!(output.contains("cli"));
+        assert!(output.contains("/scripts/gh-pr-list.sh"));
+        assert!(output.contains("List pull requests"));
+        assert!(output.contains("open"));
+    }
+
+    #[test]
+    fn run_rules_cli_tool_uses_command_as_fallback_description() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+        let mut cli = BTreeMap::new();
+        cli.insert(
+            "my-tool".to_string(),
+            CliOperationDef {
+                command: "/bin/my-tool".to_string(),
+                description: None,
+            },
+        );
+        let args = RulesArgs { name: None };
+        let mut buf = Vec::new();
+        run_rules(&service, &cli, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("/bin/my-tool"));
+    }
+
+    #[test]
+    fn run_rules_filters_cli_tool_by_name() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+        let mut cli = BTreeMap::new();
+        cli.insert(
+            "gh-pr-list".to_string(),
+            CliOperationDef {
+                command: "a".to_string(),
+                description: None,
+            },
+        );
+        cli.insert(
+            "gh-run-list".to_string(),
+            CliOperationDef {
+                command: "b".to_string(),
+                description: None,
+            },
+        );
+        let args = RulesArgs {
+            name: Some("gh-pr-list".to_string()),
+        };
+        let mut buf = Vec::new();
+        run_rules(&service, &cli, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("gh-pr-list"));
+        assert!(!output.contains("gh-run-list"));
+    }
+
+    #[test]
+    fn run_rules_cli_tool_not_found_returns_error() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+        let args = RulesArgs {
+            name: Some("nonexistent".to_string()),
+        };
+        let mut buf = Vec::new();
+        let result = run_rules(&service, &BTreeMap::new(), args, &mut buf);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
     }
 
     use crate::hexagon::entities::policy::allowlist::AllowlistPolicy;

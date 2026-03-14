@@ -123,7 +123,12 @@ async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + Confi
             .await
             .map_err(|e| e.to_string()),
         Some(Command::Rules(args)) => {
-            run_rules(registry, args, &mut std::io::stdout()).map_err(|e| e.to_string())
+            let cli_ops = registry
+                .store()
+                .load()
+                .map(|c| c.cli_operations)
+                .unwrap_or_default();
+            run_rules(registry, &cli_ops, args, &mut std::io::stdout()).map_err(|e| e.to_string())
         }
         Some(Command::Tools(args)) => dispatch_tools(registry, args, verbose)
             .await
