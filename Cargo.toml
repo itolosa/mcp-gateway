@@ -35,6 +35,7 @@ url = "2"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -45,6 +46,7 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 indexing_slicing = "deny"
+cognitive_complexity = "deny"
 
 [profile.mutants]
 inherits = "test"

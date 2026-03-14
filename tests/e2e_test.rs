@@ -1,4 +1,9 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::cognitive_complexity
+)]
 
 use rmcp::model::CallToolRequestParams;
 use rmcp::transport::child_process::TokioChildProcess;

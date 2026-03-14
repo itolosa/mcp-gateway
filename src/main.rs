@@ -1,3 +1,4 @@
+#![allow(clippy::cognitive_complexity)]
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -31,12 +32,10 @@ use mcp_gateway::adapters::driving::ui::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
     run_denylist_remove, run_denylist_show, run_list, run_remove, run_rules, run_run, run_tools,
 };
-use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistPolicy;
-use mcp_gateway::hexagon::entities::policy::compound::CompoundPolicy;
-use mcp_gateway::hexagon::entities::policy::denylist::DenylistPolicy;
-use mcp_gateway::hexagon::entities::policy::DefaultPolicy;
 use mcp_gateway::hexagon::ports::ProviderConfigStore;
-use mcp_gateway::hexagon::usecases::gateway::{Gateway, ProviderHandle};
+use mcp_gateway::hexagon::usecases::gateway::{
+    create_policy, DefaultPolicy, Gateway, ProviderHandle,
+};
 use mcp_gateway::hexagon::usecases::registry_service::RegistryService;
 
 #[tokio::main]
@@ -480,9 +479,9 @@ async fn build_upstreams(
         let (provider_type, target) = describe_server_entry(&entry);
         let provider_type = provider_type.to_string();
         let target = target.to_string();
-        let filter = CompoundPolicy::new(
-            AllowlistPolicy::new(entry.allowed_operations().to_vec()),
-            DenylistPolicy::new(entry.denied_operations().to_vec()),
+        let filter = create_policy(
+            entry.allowed_operations().to_vec(),
+            entry.denied_operations().to_vec(),
         );
         match connect_upstream(&name, entry, verbose).await {
             Ok(service) => {

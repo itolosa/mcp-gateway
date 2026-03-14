@@ -15,10 +15,9 @@ mod proxy_stress {
     use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{
         McpAdapter, RmcpProviderClient,
     };
-    use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistPolicy;
-    use mcp_gateway::hexagon::entities::policy::compound::CompoundPolicy;
-    use mcp_gateway::hexagon::entities::policy::denylist::DenylistPolicy;
-    use mcp_gateway::hexagon::usecases::gateway::{Gateway, ProviderHandle};
+    use mcp_gateway::hexagon::usecases::gateway::{
+        create_policy, DefaultPolicy, Gateway, ProviderHandle,
+    };
     use rmcp::model::{
         Annotated, CallToolRequestParams, CallToolResult, Content, ErrorData,
         GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
@@ -206,8 +205,8 @@ mod proxy_stress {
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    fn passthrough_filter() -> CompoundPolicy<AllowlistPolicy, DenylistPolicy> {
-        CompoundPolicy::new(AllowlistPolicy::new(vec![]), DenylistPolicy::new(vec![]))
+    fn passthrough_filter() -> DefaultPolicy {
+        create_policy(vec![], vec![])
     }
 
     async fn setup_proxy() -> (
