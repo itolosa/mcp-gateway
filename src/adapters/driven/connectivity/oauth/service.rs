@@ -117,7 +117,20 @@ async fn browser_auth(
     listener: tokio::net::TcpListener,
 ) -> Result<CallbackParams, OAuthError> {
     let browser_override = std::env::var("BROWSER");
-    let program = browser_override.as_deref().unwrap_or(default_browser());
+    let program = browser_override.as_deref().unwrap_or({
+        #[cfg(target_os = "macos")]
+        {
+            "open"
+        }
+        #[cfg(target_os = "windows")]
+        {
+            "cmd"
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            "xdg-open"
+        }
+    });
     let _ = std::process::Command::new(program)
         .arg(&auth_url)
         .stdin(std::process::Stdio::null())
@@ -126,13 +139,4 @@ async fn browser_auth(
         .spawn();
     eprintln!("Visit this URL to authorize: {auth_url}");
     run_callback_on_listener(listener).await
-}
-
-fn default_browser() -> &'static str {
-    #[cfg(target_os = "macos")]
-    return "open";
-    #[cfg(target_os = "windows")]
-    return "cmd";
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    return "xdg-open";
 }

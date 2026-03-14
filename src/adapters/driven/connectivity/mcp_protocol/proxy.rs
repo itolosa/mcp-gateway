@@ -65,9 +65,13 @@ pub(crate) async fn serve_proxy_http_on_listener<H>(
 where
     H: rmcp::ServerHandler + 'static,
 {
+    let defaults = StreamableHttpServerConfig::default();
     let config = StreamableHttpServerConfig {
         cancellation_token: ct.clone(),
-        ..Default::default()
+        sse_keep_alive: defaults.sse_keep_alive,
+        sse_retry: defaults.sse_retry,
+        stateful_mode: defaults.stateful_mode,
+        json_response: defaults.json_response,
     };
     let h = handler;
     let service: StreamableHttpService<Arc<H>, LocalSessionManager> = StreamableHttpService::new(
