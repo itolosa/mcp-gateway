@@ -188,53 +188,6 @@ fn http_deserializes_allowed_tools() {
 }
 
 #[test]
-fn allowed_tools_accessor_returns_correct_slice() {
-    let stdio = McpServerEntry::Stdio(StdioConfig {
-        command: "cmd".to_string(),
-        args: vec![],
-        env: BTreeMap::new(),
-        allowed_operations: vec!["a".to_string()],
-        denied_operations: vec![],
-    });
-    assert_eq!(stdio.allowed_operations(), &["a"]);
-
-    let http = McpServerEntry::Http(HttpConfig {
-        url: "https://x.com".to_string(),
-        headers: BTreeMap::new(),
-        allowed_operations: vec!["b".to_string(), "c".to_string()],
-        denied_operations: vec![],
-        auth: None,
-    });
-    assert_eq!(http.allowed_operations(), &["b", "c"]);
-}
-
-#[test]
-fn allowed_tools_mut_modifies_stdio() {
-    let mut entry = McpServerEntry::Stdio(StdioConfig {
-        command: "cmd".to_string(),
-        args: vec![],
-        env: BTreeMap::new(),
-        allowed_operations: vec![],
-        denied_operations: vec![],
-    });
-    entry.allowed_operations_mut().push("new_tool".to_string());
-    assert_eq!(entry.allowed_operations(), &["new_tool"]);
-}
-
-#[test]
-fn allowed_tools_mut_modifies_http() {
-    let mut entry = McpServerEntry::Http(HttpConfig {
-        url: "https://x.com".to_string(),
-        headers: BTreeMap::new(),
-        allowed_operations: vec!["existing".to_string()],
-        denied_operations: vec![],
-        auth: None,
-    });
-    entry.allowed_operations_mut().push("another".to_string());
-    assert_eq!(entry.allowed_operations(), &["existing", "another"]);
-}
-
-#[test]
 fn stdio_serializes_denied_tools_as_camel_case() {
     let entry = McpServerEntry::Stdio(StdioConfig {
         command: "echo".to_string(),
@@ -288,53 +241,6 @@ fn http_omits_empty_denied_tools() {
     });
     let json = serde_json::to_string(&entry).unwrap();
     assert!(!json.contains("deniedTools"));
-}
-
-#[test]
-fn denied_tools_accessor_returns_correct_slice() {
-    let stdio = McpServerEntry::Stdio(StdioConfig {
-        command: "cmd".to_string(),
-        args: vec![],
-        env: BTreeMap::new(),
-        allowed_operations: vec![],
-        denied_operations: vec!["a".to_string()],
-    });
-    assert_eq!(stdio.denied_operations(), &["a"]);
-
-    let http = McpServerEntry::Http(HttpConfig {
-        url: "https://x.com".to_string(),
-        headers: BTreeMap::new(),
-        allowed_operations: vec![],
-        denied_operations: vec!["b".to_string(), "c".to_string()],
-        auth: None,
-    });
-    assert_eq!(http.denied_operations(), &["b", "c"]);
-}
-
-#[test]
-fn denied_tools_mut_modifies_stdio() {
-    let mut entry = McpServerEntry::Stdio(StdioConfig {
-        command: "cmd".to_string(),
-        args: vec![],
-        env: BTreeMap::new(),
-        allowed_operations: vec![],
-        denied_operations: vec![],
-    });
-    entry.denied_operations_mut().push("dangerous".to_string());
-    assert_eq!(entry.denied_operations(), &["dangerous"]);
-}
-
-#[test]
-fn denied_tools_mut_modifies_http() {
-    let mut entry = McpServerEntry::Http(HttpConfig {
-        url: "https://x.com".to_string(),
-        headers: BTreeMap::new(),
-        allowed_operations: vec![],
-        denied_operations: vec!["existing".to_string()],
-        auth: None,
-    });
-    entry.denied_operations_mut().push("another".to_string());
-    assert_eq!(entry.denied_operations(), &["existing", "another"]);
 }
 
 #[test]

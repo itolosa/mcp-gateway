@@ -1,5 +1,5 @@
 pub mod gateway;
-pub mod mapping;
+pub(crate) mod mapping;
 pub mod registry_error;
 pub mod registry_service;
 

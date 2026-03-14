@@ -8,6 +8,5 @@
 mod common;
 
 mod hexagon {
-    pub mod entities;
     pub mod usecases;
 }
