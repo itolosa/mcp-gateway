@@ -10,6 +10,10 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub config: Option<PathBuf>,
 
+    /// Show verbose output (upstream logs, child stderr)
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -38,8 +42,12 @@ pub enum Command {
     Restart(StartArgs),
     /// Attach to a running gateway daemon and stream logs
     Attach(AttachArgs),
+    /// Show logs from a running gateway instance
+    Logs(LogsArgs),
     /// Manage OAuth authentication for upstream servers
     Oauth(OAuthArgs),
+    /// Show tool filtering rules for all servers
+    Tools(ToolsArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -47,6 +55,9 @@ pub struct StopArgs {
     /// Port of the instance to stop (prompts if multiple running)
     #[arg(long, short)]
     pub port: Option<u16>,
+    /// Stop all running instances
+    #[arg(long, short)]
+    pub all: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -61,6 +72,16 @@ pub struct AttachArgs {
     /// Port to connect to (prompts if multiple running)
     #[arg(long, short)]
     pub port: Option<u16>,
+}
+
+#[derive(Debug, Parser)]
+pub struct LogsArgs {
+    /// Port of the instance to read logs from (prompts if multiple running)
+    #[arg(long, short)]
+    pub port: Option<u16>,
+    /// Follow log output (like tail -f)
+    #[arg(long, short)]
+    pub follow: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -119,6 +140,12 @@ pub struct OAuthClearArgs {
     /// Skip confirmation prompt when clearing all credentials
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct ToolsArgs {
+    /// Name of a specific server to inspect (shows all if omitted)
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -469,7 +496,7 @@ mod tests {
         let cli = Cli::try_parse_from(["mcp-gateway", "stop"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Stop(ref args)) if args.port.is_none()
+            Some(Command::Stop(ref args)) if args.port.is_none() && !args.all
         ));
     }
 
@@ -478,7 +505,25 @@ mod tests {
         let cli = Cli::try_parse_from(["mcp-gateway", "stop", "--port", "9090"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Stop(ref args)) if args.port == Some(9090)
+            Some(Command::Stop(ref args)) if args.port == Some(9090) && !args.all
+        ));
+    }
+
+    #[test]
+    fn parses_stop_all() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "stop", "--all"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Stop(ref args)) if args.all && args.port.is_none()
+        ));
+    }
+
+    #[test]
+    fn parses_stop_all_short() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "stop", "-a"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Stop(ref args)) if args.all
         ));
     }
 
@@ -627,6 +672,42 @@ mod tests {
     }
 
     #[test]
+    fn parses_logs() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "logs"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Logs(ref args)) if args.port.is_none() && !args.follow
+        ));
+    }
+
+    #[test]
+    fn parses_logs_with_follow() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "logs", "--follow"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Logs(ref args)) if args.follow
+        ));
+    }
+
+    #[test]
+    fn parses_logs_with_follow_short() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "logs", "-f"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Logs(ref args)) if args.follow
+        ));
+    }
+
+    #[test]
+    fn parses_logs_with_port() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "logs", "--port", "9090"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Logs(ref args)) if args.port == Some(9090)
+        ));
+    }
+
+    #[test]
     fn parses_attach() {
         let cli = Cli::try_parse_from(["mcp-gateway", "attach"]).unwrap();
         assert!(matches!(
@@ -708,6 +789,24 @@ mod tests {
             Some(Command::Oauth(OAuthArgs {
                 action: OAuthAction::Clear(ref args),
             })) if args.name.as_deref() == Some("my-server") && args.force
+        ));
+    }
+
+    #[test]
+    fn parses_tools_no_args() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "tools"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Tools(ref args)) if args.name.is_none()
+        ));
+    }
+
+    #[test]
+    fn parses_tools_with_server_name() {
+        let cli = Cli::try_parse_from(["mcp-gateway", "tools", "my-server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Tools(ref args)) if args.name.as_deref() == Some("my-server")
         ));
     }
 

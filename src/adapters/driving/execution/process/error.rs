@@ -1,9 +1,9 @@
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
-    #[error("gateway already running (PID {pid})")]
-    AlreadyRunning { pid: u32 },
+    #[error("port {port} already in use by gateway (PID {pid}), use 'stop --port {port}' first or choose a different port")]
+    AlreadyRunning { pid: u32, port: u16 },
 
-    #[error("port {port} is already in use")]
+    #[error("port {port} is in use by another process, choose a different port with --port")]
     PortInUse { port: u16 },
 
     #[error("failed to write PID file: {message}")]
@@ -12,14 +12,17 @@ pub enum DaemonError {
     #[error("failed to read PID file: {message}")]
     PidRead { message: String },
 
-    #[error("gateway is not running")]
+    #[error("no gateway instance found, start one with 'mcp-gateway start'")]
     NotRunning,
 
     #[error("failed to send signal: {message}")]
     SignalFailed { message: String },
 
-    #[error("attach failed: {message}")]
+    #[error("cannot attach: {message}")]
     AttachFailed { message: String },
+
+    #[error("cannot read logs: {message}")]
+    LogRead { message: String },
 
     #[error("{0}")]
     UserInput(String),
@@ -31,16 +34,23 @@ mod tests {
 
     #[test]
     fn already_running_display() {
-        let err = DaemonError::AlreadyRunning { pid: 1234 };
-        assert!(err.to_string().contains("1234"));
-        assert!(err.to_string().contains("already running"));
+        let err = DaemonError::AlreadyRunning {
+            pid: 1234,
+            port: 8080,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("1234"));
+        assert!(msg.contains("8080"));
+        assert!(msg.contains("stop --port"));
     }
 
     #[test]
     fn port_in_use_display() {
         let err = DaemonError::PortInUse { port: 8080 };
-        assert!(err.to_string().contains("8080"));
-        assert!(err.to_string().contains("already in use"));
+        let msg = err.to_string();
+        assert!(msg.contains("8080"));
+        assert!(msg.contains("another process"));
+        assert!(msg.contains("--port"));
     }
 
     #[test]
@@ -64,7 +74,9 @@ mod tests {
     #[test]
     fn not_running_display() {
         let err = DaemonError::NotRunning;
-        assert!(err.to_string().contains("not running"));
+        let msg = err.to_string();
+        assert!(msg.contains("no gateway instance found"));
+        assert!(msg.contains("mcp-gateway start"));
     }
 
     #[test]
@@ -81,8 +93,19 @@ mod tests {
         let err = DaemonError::AttachFailed {
             message: "connection refused".to_string(),
         };
-        assert!(err.to_string().contains("connection refused"));
-        assert!(err.to_string().contains("attach"));
+        let msg = err.to_string();
+        assert!(msg.contains("connection refused"));
+        assert!(msg.contains("cannot attach"));
+    }
+
+    #[test]
+    fn log_read_display() {
+        let err = DaemonError::LogRead {
+            message: "file not found".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("file not found"));
+        assert!(msg.contains("cannot read logs"));
     }
 
     #[test]

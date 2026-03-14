@@ -145,6 +145,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_return_empty_from_test_provider_with_no_operations() {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "server".to_string(),
+            ProviderHandle {
+                client: TestProvider::empty(),
+                filter: passthrough_filter(),
+            },
+        );
+        let result = ListOperations::execute(&providers, &NullCliRunner)
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
     async fn list_tools_skips_erroring_upstream_gracefully() {
         let mut upstreams = BTreeMap::new();
         upstreams.insert(

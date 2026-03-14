@@ -1,12 +1,14 @@
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ListToolsResult, PaginatedRequestParams,
-    ServerInfo, Tool,
+    CallToolRequestParams, CallToolResult, Content, GetPromptRequestParams, GetPromptResult,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+    PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler};
 
 use crate::hexagon::ports::{
-    CliOperationRunner, GatewayError, OperationCallRequest, OperationPolicy, ProviderClient,
+    CliOperationRunner, GatewayError, OperationCallRequest, OperationPolicy, PromptGetRequest,
+    ProviderClient, ResourceReadRequest,
 };
 use crate::hexagon::usecases::gateway::Gateway;
 
@@ -48,6 +50,8 @@ impl<
         ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
+                .enable_resources()
+                .enable_prompts()
                 .build(),
         )
         .with_server_info(rmcp::model::Implementation::new(
@@ -103,6 +107,106 @@ impl<
         } else {
             Ok(CallToolResult::success(content))
         }
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        let resources = self
+            .gateway
+            .list_resources()
+            .await
+            .map_err(gateway_error_to_mcp)?;
+        let mcp_resources = resources
+            .into_iter()
+            .filter_map(|r| serde_json::from_str(&r.json).ok())
+            .collect();
+        Ok(ListResourcesResult {
+            resources: mcp_resources,
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        let templates = self
+            .gateway
+            .list_resource_templates()
+            .await
+            .map_err(gateway_error_to_mcp)?;
+        let mcp_templates = templates
+            .into_iter()
+            .filter_map(|t| serde_json::from_str(&t.json).ok())
+            .collect();
+        Ok(ListResourceTemplatesResult {
+            resource_templates: mcp_templates,
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        let domain_request = ResourceReadRequest {
+            uri: request.uri.clone(),
+        };
+        let result = self
+            .gateway
+            .read_resource(domain_request)
+            .await
+            .map_err(gateway_error_to_mcp)?;
+        serde_json::from_str(&result.json)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        let prompts = self
+            .gateway
+            .list_prompts()
+            .await
+            .map_err(gateway_error_to_mcp)?;
+        let mcp_prompts = prompts
+            .into_iter()
+            .filter_map(|p| serde_json::from_str(&p.json).ok())
+            .collect();
+        Ok(ListPromptsResult {
+            prompts: mcp_prompts,
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, ErrorData> {
+        let domain_request = PromptGetRequest {
+            name: request.name.clone(),
+            arguments: request
+                .arguments
+                .map(|m| serde_json::to_string(&m).unwrap_or_default()),
+        };
+        let result = self
+            .gateway
+            .get_prompt(domain_request)
+            .await
+            .map_err(gateway_error_to_mcp)?;
+        serde_json::from_str(&result.json)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))
     }
 }
 

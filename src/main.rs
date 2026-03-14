@@ -19,6 +19,7 @@ use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, Rmcp
 use mcp_gateway::adapters::driven::storage::{ConfigStore, FileConfigStore};
 use mcp_gateway::adapters::driving::execution::process::error::DaemonError;
 use mcp_gateway::adapters::driving::execution::process::log_broadcast::BroadcastLayer;
+use mcp_gateway::adapters::driving::execution::process::log_file;
 use mcp_gateway::adapters::driving::execution::process::pid;
 use mcp_gateway::adapters::driving::execution::process::status_socket::{
     self, GatewayStatusReport, ProviderStatus,
@@ -28,7 +29,7 @@ use mcp_gateway::adapters::driving::ui::command::{
 };
 use mcp_gateway::adapters::driving::ui::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
-    run_denylist_remove, run_denylist_show, run_list, run_remove, run_run,
+    run_denylist_remove, run_denylist_show, run_list, run_remove, run_run, run_tools,
 };
 use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistPolicy;
 use mcp_gateway::hexagon::entities::policy::compound::CompoundPolicy;
@@ -40,9 +41,16 @@ use mcp_gateway::hexagon::usecases::registry_service::RegistryService;
 
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
     let (log_sender, _) = broadcast::channel::<String>(1024);
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let default_filter = if cli.verbose {
+        "info"
+    } else {
+        "mcp_gateway=info"
+    };
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     let fmt_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     let broadcast_layer = BroadcastLayer::new(log_sender.clone());
     let subscriber = tracing_subscriber::registry()
@@ -52,13 +60,18 @@ async fn main() {
     tracing::subscriber::set_global_default(subscriber)
         .unwrap_or_else(|_| eprintln!("failed to set tracing subscriber"));
 
-    let cli = Cli::parse();
-
     let config_path = cli.config.or_else(default_config_path).unwrap_or_default();
     let store = FileConfigStore::new(&config_path);
     let registry = RegistryService::new(store);
 
-    let result = dispatch_command(cli.command, &registry, &config_path, log_sender).await;
+    let result = dispatch_command(
+        cli.command,
+        cli.verbose,
+        &registry,
+        &config_path,
+        log_sender,
+    )
+    .await;
 
     if let Err(e) = result {
         print_error_and_exit(&e);
@@ -67,6 +80,7 @@ async fn main() {
 
 async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     command: Option<Command>,
+    verbose: bool,
     registry: &RegistryService<S>,
     config_path: &std::path::Path,
     log_sender: broadcast::Sender<String>,
@@ -88,21 +102,29 @@ async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + Confi
         Some(Command::Denylist(args)) => {
             dispatch_denylist(registry, args.action).map_err(|e| e.to_string())
         }
-        Some(Command::Run(args)) => run_gateway(registry, args.transport, args.port, log_sender)
-            .await
-            .map_err(|e| e.to_string()),
-        Some(Command::Start(args)) => dispatch_start(registry, config_path, args, log_sender)
-            .await
-            .map_err(|e| e.to_string()),
-        Some(Command::Stop(args)) => dispatch_stop(args.port).map_err(|e| e.to_string()),
+        Some(Command::Run(args)) => {
+            run_gateway(registry, args.transport, args.port, verbose, log_sender)
+                .await
+                .map_err(|e| e.to_string())
+        }
+        Some(Command::Start(args)) => {
+            dispatch_start(registry, config_path, args, verbose, log_sender)
+                .await
+                .map_err(|e| e.to_string())
+        }
+        Some(Command::Stop(args)) => dispatch_stop(args.port, args.all).map_err(|e| e.to_string()),
         Some(Command::Status(args)) => dispatch_status(args.port).await.map_err(|e| e.to_string()),
         Some(Command::Restart(args)) => {
             dispatch_restart(config_path, args.port).map_err(|e| e.to_string())
         }
         Some(Command::Attach(args)) => run_attach(args.port).await.map_err(|e| e.to_string()),
+        Some(Command::Logs(args)) => dispatch_logs(args).await.map_err(|e| e.to_string()),
         Some(Command::Oauth(args)) => dispatch_oauth(registry, args)
             .await
             .map_err(|e| e.to_string()),
+        Some(Command::Tools(args)) => {
+            run_tools(registry, args, &mut std::io::stdout()).map_err(|e| e.to_string())
+        }
     }
 }
 
@@ -134,7 +156,10 @@ fn dispatch_denylist<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
 
 fn check_single_instance(instances: &[pid::InstanceInfo]) -> Result<(), DaemonError> {
     if let Some(first) = instances.first() {
-        return Err(DaemonError::AlreadyRunning { pid: first.pid });
+        return Err(DaemonError::AlreadyRunning {
+            pid: first.pid,
+            port: first.port.unwrap_or(0),
+        });
     }
     Ok(())
 }
@@ -188,6 +213,7 @@ async fn dispatch_start<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigS
     registry: &RegistryService<S>,
     config_path: &std::path::Path,
     args: mcp_gateway::adapters::driving::ui::command::StartArgs,
+    verbose: bool,
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.transport != DownstreamTransport::Http {
@@ -200,7 +226,7 @@ async fn dispatch_start<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigS
         check_single_instance(&instances)?;
     }
     if args.foreground {
-        run_foreground_daemon(registry, args.port, log_sender)
+        run_foreground_daemon(registry, args.port, verbose, log_sender)
             .await
             .map_err(Into::into)
     } else {
@@ -208,9 +234,39 @@ async fn dispatch_start<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigS
     }
 }
 
-fn dispatch_stop(port_arg: Option<u16>) -> Result<(), DaemonError> {
+fn dispatch_stop(port_arg: Option<u16>, all: bool) -> Result<(), DaemonError> {
     let run_dir = pid::default_run_dir().unwrap_or_default();
     let instances = pid::list_instances(&run_dir)?;
+    if all {
+        if instances.is_empty() {
+            return Err(DaemonError::NotRunning);
+        }
+        eprintln!("Stop all {} running instances?", instances.len());
+        for instance in &instances {
+            let label = match instance.port {
+                Some(p) => format!("{} port {p}", instance.transport),
+                None => instance.transport.clone(),
+            };
+            eprintln!("  {} (PID {})", label, instance.pid);
+        }
+        eprint!("Confirm [y/N]: ");
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| DaemonError::UserInput(format!("failed to read input: {e}")))?;
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            tracing::info!("aborted");
+            return Ok(());
+        }
+        for instance in &instances {
+            let _ = pid::stop_instance(&run_dir, instance.pid);
+            match instance.port {
+                Some(p) => tracing::info!("gateway on port {p} stopped"),
+                None => tracing::info!("gateway (PID {}) stopped", instance.pid),
+            }
+        }
+        return Ok(());
+    }
     let instance = resolve_instance(port_arg, &instances)?;
     pid::stop_instance(&run_dir, instance.pid)?;
     match instance.port {
@@ -289,6 +345,7 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
     registry: &RegistryService<S>,
     transport: DownstreamTransport,
     port: u16,
+    verbose: bool,
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
@@ -297,7 +354,10 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
         let instances = pid::list_instances(&run_dir).unwrap_or_default();
         if let Some(first) = instances.first() {
             return Err(ProxyError::UpstreamInit {
-                message: format!("single-instance mode: already running (PID {})", first.pid),
+                message: format!(
+                    "single-instance mode: gateway already running (PID {}), use 'stop' first",
+                    first.pid
+                ),
             });
         }
     }
@@ -319,13 +379,15 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
             message: e.to_string(),
         })?;
         let sock_path = pid::sock_path(&run_dir, own_pid);
+        let log_path = pid::log_path(&run_dir, own_pid);
+        let _log_handle = log_file::spawn_log_writer(log_path, &log_sender);
         let initializing_report = GatewayStatusReport {
             state: "Initializing".to_string(),
             providers: vec![],
         };
         let (report_tx, report_rx) = tokio::sync::watch::channel(initializing_report);
         let _status_handle = status_socket::start_status_listener(sock_path.clone(), report_rx);
-        let (upstreams, statuses) = build_upstreams(servers).await?;
+        let (upstreams, statuses) = build_upstreams(servers, verbose).await?;
         let _ = report_tx.send(GatewayStatusReport {
             state: "Listening".to_string(),
             providers: statuses,
@@ -356,6 +418,15 @@ async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStor
                 }
             }
         };
+        // In stdio mode, downstream disconnect is a normal exit, not an error.
+        let result = if transport == DownstreamTransport::Stdio {
+            result.or_else(|e| match e {
+                ProxyError::DownstreamInit { .. } => Ok(()),
+                other => Err(other),
+            })
+        } else {
+            result
+        };
         pid::remove_instance(&run_dir, own_pid);
         result
     })
@@ -371,6 +442,7 @@ fn describe_server_entry(entry: &McpServerEntry) -> (&str, &str) {
 
 async fn build_upstreams(
     servers: BTreeMap<String, McpServerEntry>,
+    verbose: bool,
 ) -> Result<
     (
         BTreeMap<String, ProviderHandle<RmcpProviderClient, DefaultPolicy>>,
@@ -380,6 +452,10 @@ async fn build_upstreams(
 > {
     let mut upstreams = BTreeMap::new();
     let mut statuses = Vec::new();
+    let total = servers.len();
+    if total > 0 {
+        tracing::info!("Connecting to {total} servers...");
+    }
     for (name, entry) in servers {
         let (provider_type, target) = describe_server_entry(&entry);
         let provider_type = provider_type.to_string();
@@ -388,21 +464,22 @@ async fn build_upstreams(
             AllowlistPolicy::new(entry.allowed_operations().to_vec()),
             DenylistPolicy::new(entry.denied_operations().to_vec()),
         );
-        match connect_upstream(&name, entry).await {
+        match connect_upstream(&name, entry, verbose).await {
             Ok(service) => {
                 statuses.push(ProviderStatus {
                     name: name.clone(),
                     connected: true,
-                    provider_type,
+                    provider_type: provider_type.clone(),
                     target,
                 });
                 upstreams.insert(
-                    name,
+                    name.clone(),
                     ProviderHandle {
                         client: RmcpProviderClient::new(service),
                         filter,
                     },
                 );
+                tracing::info!("  \u{2714} {name} ({provider_type})");
             }
             Err(e) => {
                 statuses.push(ProviderStatus {
@@ -411,9 +488,20 @@ async fn build_upstreams(
                     provider_type,
                     target,
                 });
-                eprintln!("'{name}' failed to connect: {e}, skipping");
+                let reason = match &e {
+                    ProxyError::UpstreamInit { message } => message
+                        .strip_prefix(&format!("{name}: "))
+                        .unwrap_or(message)
+                        .to_string(),
+                    other => other.to_string(),
+                };
+                tracing::warn!("  \u{2718} {name} \u{2014} {}", simplify_error(&reason));
             }
         }
+    }
+    let connected = upstreams.len();
+    if total > 0 {
+        tracing::info!("Ready ({connected}/{total} connected)");
     }
     Ok((upstreams, statuses))
 }
@@ -421,6 +509,7 @@ async fn build_upstreams(
 async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
     registry: &RegistryService<S>,
     port: u16,
+    verbose: bool,
     log_sender: broadcast::Sender<String>,
 ) -> Result<(), ProxyError> {
     let gateway_config = registry.store().load()?;
@@ -432,13 +521,15 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
         })?;
         let own_pid = std::process::id();
         let sock_path = pid::sock_path(&run_dir, own_pid);
+        let log_path = pid::log_path(&run_dir, own_pid);
+        let _log_handle = log_file::spawn_log_writer(log_path, &log_sender);
         let initializing_report = GatewayStatusReport {
             state: "Initializing".to_string(),
             providers: vec![],
         };
         let (report_tx, report_rx) = tokio::sync::watch::channel(initializing_report);
         let _status_handle = status_socket::start_status_listener(sock_path.clone(), report_rx);
-        let (upstreams, statuses) = build_upstreams(servers).await?;
+        let (upstreams, statuses) = build_upstreams(servers, verbose).await?;
         let _ = report_tx.send(GatewayStatusReport {
             state: "Listening".to_string(),
             providers: statuses,
@@ -470,6 +561,38 @@ async fn run_foreground_daemon<S: ProviderConfigStore<Entry = McpServerEntry> + 
     .await
 }
 
+async fn dispatch_logs(
+    args: mcp_gateway::adapters::driving::ui::command::LogsArgs,
+) -> Result<(), DaemonError> {
+    let run_dir = pid::default_run_dir().unwrap_or_default();
+    // Try live instances first
+    let instances = pid::list_instances(&run_dir)?;
+    if !instances.is_empty() {
+        let instance = resolve_instance(args.port, &instances)?;
+        let path = pid::log_path(&run_dir, instance.pid);
+        return log_file::read_log(&path, args.follow).await;
+    }
+    // No live instances — look for log files from dead instances
+    let log_path = find_latest_log(&run_dir)?;
+    log_file::read_log(&log_path, args.follow).await
+}
+
+fn find_latest_log(run_dir: &std::path::Path) -> Result<std::path::PathBuf, DaemonError> {
+    let entries = std::fs::read_dir(run_dir).map_err(|_| DaemonError::NotRunning)?;
+    let mut logs: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
+        .collect();
+    logs.sort_by(|a, b| {
+        let t_a = a.metadata().and_then(|m| m.modified()).ok();
+        let t_b = b.metadata().and_then(|m| m.modified()).ok();
+        t_b.cmp(&t_a)
+    });
+    logs.first()
+        .map(|e| e.path())
+        .ok_or(DaemonError::NotRunning)
+}
+
 async fn run_attach(port_override: Option<u16>) -> Result<(), DaemonError> {
     let port = match port_override {
         Some(p) => p,
@@ -491,7 +614,10 @@ fn start_daemon(config_path: &std::path::Path, port: u16) -> Result<(), DaemonEr
     // Check if any existing instance already uses this port
     let instances = pid::list_instances(&run_dir)?;
     if let Some(existing) = instances.iter().find(|i| i.port == Some(port)) {
-        return Err(DaemonError::AlreadyRunning { pid: existing.pid });
+        return Err(DaemonError::AlreadyRunning {
+            pid: existing.pid,
+            port,
+        });
     }
     check_port_available(port)?;
     let child = spawn_daemon_process(config_path, port)?;
@@ -652,8 +778,9 @@ const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_
 async fn connect_upstream(
     name: &str,
     entry: McpServerEntry,
+    verbose: bool,
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ProxyError> {
-    let fut = connect_upstream_inner(name, entry);
+    let fut = connect_upstream_inner(name, entry, verbose);
     tokio::time::timeout(UPSTREAM_CONNECT_TIMEOUT, fut)
         .await
         .map_err(|_| ProxyError::UpstreamInit {
@@ -664,12 +791,13 @@ async fn connect_upstream(
 async fn connect_upstream_inner(
     name: &str,
     entry: McpServerEntry,
+    verbose: bool,
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ProxyError> {
     match entry {
         McpServerEntry::Stdio(config) => {
             let transport =
                 mcp_gateway::adapters::driven::connectivity::mcp_protocol::proxy::spawn_transport(
-                    &config,
+                    &config, verbose,
                 )?;
             ().serve(transport)
                 .await
@@ -703,4 +831,13 @@ async fn connect_upstream_inner(
             }
         }
     }
+}
+
+fn simplify_error(msg: &str) -> String {
+    // Strip verbose rmcp Transport type paths:
+    // "Send message error Transport [...] error: Auth error: X" → "Auth error: X"
+    if let Some(pos) = msg.find("] error: ") {
+        return msg[pos + "] error: ".len()..].to_string();
+    }
+    msg.to_string()
 }
