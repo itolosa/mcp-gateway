@@ -1,16 +1,17 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use mcp_gateway::adapters::driven::cli_operation_runner::NullCliRunner;
 use mcp_gateway::adapters::driven::configuration::error::ConfigError;
 use mcp_gateway::adapters::driven::configuration::model::{HttpConfig, OAuthConfig, StdioConfig};
-use mcp_gateway::adapters::driven::connectivity::cli_execution::NullCliRunner;
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::proxy::{
     create_http_transport, create_oauth_http_transport, gateway_router, serve_proxy,
     serve_proxy_http, spawn_transport,
 };
-use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, RmcpProviderClient};
+use mcp_gateway::adapters::driven::connectivity::mcp_protocol::McpAdapter;
 use mcp_gateway::adapters::driven::connectivity::oauth::OAuthError;
+use mcp_gateway::adapters::driven::provider_client::RmcpProviderClient;
 use mcp_gateway::hexagon::usecases::gateway::{
     create_policy, DefaultPolicy, Gateway, ProviderHandle,
 };

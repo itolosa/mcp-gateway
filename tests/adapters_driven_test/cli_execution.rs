@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
+use mcp_gateway::adapters::driven::cli_operation_runner::{NullCliRunner, ProcessCliRunner};
 use mcp_gateway::adapters::driven::configuration::model::CliOperationDef;
-use mcp_gateway::adapters::driven::connectivity::cli_execution::{NullCliRunner, ProcessCliRunner};
 use mcp_gateway::hexagon::ports::driven::cli_operation_runner::CliOperationRunner;
 use mcp_gateway::hexagon::ports::driven::cli_operation_runner::OperationCallRequest;
 

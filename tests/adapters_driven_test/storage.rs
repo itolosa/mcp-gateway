@@ -5,7 +5,7 @@ use mcp_gateway::adapters::driven::configuration::error::ConfigError;
 use mcp_gateway::adapters::driven::configuration::model::{
     GatewayConfig, McpServerEntry, StdioConfig,
 };
-use mcp_gateway::adapters::driven::storage::{ConfigStore, FileConfigStore};
+use mcp_gateway::adapters::driven::provider_config_store::{ConfigStore, FileConfigStore};
 use mcp_gateway::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
 
 #[test]

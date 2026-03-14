@@ -136,9 +136,9 @@ async fn failing_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(),
 }
 
 async fn e2e_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
-    use mcp_gateway::adapters::driven::connectivity::cli_execution::NullCliRunner;
+    use mcp_gateway::adapters::driven::cli_operation_runner::NullCliRunner;
     use mcp_gateway::adapters::driven::connectivity::mcp_protocol::McpAdapter;
-    use mcp_gateway::adapters::driven::connectivity::mcp_protocol::RmcpProviderClient;
+    use mcp_gateway::adapters::driven::provider_client::RmcpProviderClient;
     use mcp_gateway::hexagon::usecases::gateway::{Gateway, ProviderHandle};
     use rmcp::ServiceExt;
 

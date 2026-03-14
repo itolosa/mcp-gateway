@@ -12,7 +12,7 @@ use mcp_gateway::hexagon::usecases::gateway::{
     create_policy, DefaultPolicy, Gateway, ProviderHandle,
 };
 
-use mcp_gateway::adapters::driven::connectivity::cli_execution::NullCliRunner;
+use mcp_gateway::adapters::driven::cli_operation_runner::NullCliRunner;
 
 // -- Mock Providers --
 

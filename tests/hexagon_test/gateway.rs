@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use mcp_gateway::adapters::driven::connectivity::cli_execution::NullCliRunner;
+use mcp_gateway::adapters::driven::cli_operation_runner::NullCliRunner;
 use mcp_gateway::hexagon::ports::driven::provider_client::{
     PromptDescriptor, ResourceDescriptor, ResourceTemplateDescriptor,
 };

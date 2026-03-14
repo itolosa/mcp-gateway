@@ -9,15 +9,16 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
+use mcp_gateway::adapters::driven::cli_operation_runner::{NullCliRunner, ProcessCliRunner};
 use mcp_gateway::adapters::driven::configuration::default_config_path;
 use mcp_gateway::adapters::driven::configuration::model::McpServerEntry;
-use mcp_gateway::adapters::driven::connectivity::cli_execution::{NullCliRunner, ProcessCliRunner};
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::proxy::{
     serve_proxy, serve_proxy_http,
 };
-use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, RmcpProviderClient};
-use mcp_gateway::adapters::driven::storage::{ConfigStore, FileConfigStore};
+use mcp_gateway::adapters::driven::connectivity::mcp_protocol::McpAdapter;
+use mcp_gateway::adapters::driven::provider_client::RmcpProviderClient;
+use mcp_gateway::adapters::driven::provider_config_store::{ConfigStore, FileConfigStore};
 use mcp_gateway::adapters::driving::execution::process::error::DaemonError;
 use mcp_gateway::adapters::driving::execution::process::log_broadcast::BroadcastLayer;
 use mcp_gateway::adapters::driving::execution::process::log_file;

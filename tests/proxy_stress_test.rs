@@ -8,13 +8,10 @@ mod proxy_stress {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
+    use mcp_gateway::adapters::driven::cli_operation_runner::{NullCliRunner, ProcessCliRunner};
     use mcp_gateway::adapters::driven::configuration::model::CliOperationDef;
-    use mcp_gateway::adapters::driven::connectivity::cli_execution::{
-        NullCliRunner, ProcessCliRunner,
-    };
-    use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{
-        McpAdapter, RmcpProviderClient,
-    };
+    use mcp_gateway::adapters::driven::connectivity::mcp_protocol::McpAdapter;
+    use mcp_gateway::adapters::driven::provider_client::RmcpProviderClient;
     use mcp_gateway::hexagon::usecases::gateway::{
         create_policy, DefaultPolicy, Gateway, ProviderHandle,
     };
