@@ -438,6 +438,33 @@ mod pid {
     }
 
     #[test]
+    fn stop_instance_with_retries_returns_timeout_error_when_process_ignores_term() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path();
+        // Spawn a process that traps SIGTERM and stays alive
+        let mut child = std::process::Command::new("bash")
+            .args(["-c", "trap '' TERM; sleep 60 & wait"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let info = InstanceInfo {
+            pid,
+            transport: "http".to_string(),
+            port: Some(8080),
+        };
+        write_instance(run_dir, &info).unwrap();
+        assert!(is_process_alive(pid));
+        // Use 0 retries to immediately hit the timeout path
+        let result = stop_instance_with_retries(run_dir, pid, 0);
+        assert!(matches!(result, Err(DaemonError::SignalFailed { .. })));
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("did not exit after SIGTERM"));
+        // Clean up: kill the process forcefully
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
     fn remove_pid_file_returns_error_on_directory() {
         let dir = tempfile::tempdir().unwrap();
         let inner = dir.path().join("inner");

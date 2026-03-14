@@ -198,23 +198,28 @@ pub fn send_signal(pid: u32, signal: &str) -> Result<(), DaemonError> {
 }
 
 pub fn stop_instance(run_dir: &Path, pid: u32) -> Result<(), DaemonError> {
+    stop_instance_with_retries(run_dir, pid, 100)
+}
+
+pub fn stop_instance_with_retries(
+    run_dir: &Path,
+    pid: u32,
+    max_retries: u32,
+) -> Result<(), DaemonError> {
     if !is_process_alive(pid) {
         remove_instance(run_dir, pid);
         return Err(DaemonError::NotRunning);
     }
     send_signal(pid, "TERM")?;
-    wait_for_exit(pid);
-    remove_instance(run_dir, pid);
-    Ok(())
-}
-
-fn wait_for_exit(pid: u32) {
-    for _ in 0..100 {
+    for _ in 0..max_retries {
         if !is_process_alive(pid) {
-            return;
+            remove_instance(run_dir, pid);
+            return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    #[rustfmt::skip]
+    return Err(DaemonError::SignalFailed { message: format!("process {pid} did not exit after SIGTERM") });
 }
 
 pub async fn check_port_available(port: u16) -> Result<(), DaemonError> {
