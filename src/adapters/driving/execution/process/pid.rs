@@ -58,13 +58,7 @@ pub fn log_path(run_dir: &Path, pid: u32) -> PathBuf {
 
 pub fn write_instance(run_dir: &Path, info: &InstanceInfo) -> Result<(), DaemonError> {
     let path = instance_path(run_dir, info.pid);
-    let json = match info.port {
-        Some(port) => format!(
-            r#"{{"pid":{},"transport":"{}","port":{}}}"#,
-            info.pid, info.transport, port
-        ),
-        None => format!(r#"{{"pid":{},"transport":"{}"}}"#, info.pid, info.transport),
-    };
+    let json = serde_json::to_string(info).unwrap_or_default();
     std::fs::write(&path, json).map_err(|e| DaemonError::PidWrite {
         message: e.to_string(),
     })

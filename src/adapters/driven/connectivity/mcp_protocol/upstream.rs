@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::time::Duration;
 
 use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
@@ -26,19 +27,24 @@ impl RmcpProviderClient {
         self.operation_timeout = Some(timeout);
         self
     }
+
+    async fn execute<T, E: std::fmt::Display>(
+        &self,
+        fut: impl Future<Output = Result<T, E>> + Send,
+    ) -> Result<T, ProviderError> {
+        let result = match self.operation_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, fut)
+                .await
+                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?,
+            None => fut.await,
+        };
+        result.map_err(|e| ProviderError::Service(e.to_string()))
+    }
 }
 
 impl ProviderClient for RmcpProviderClient {
     async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, ProviderError> {
-        let fut = self.service.list_tools(None);
-        let rmcp_result = if let Some(timeout) = self.operation_timeout {
-            tokio::time::timeout(timeout, fut)
-                .await
-                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
-        } else {
-            fut.await
-        };
-        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
+        let result = self.execute(self.service.list_tools(None)).await?;
         Ok(result
             .tools
             .into_iter()
@@ -58,15 +64,7 @@ impl ProviderClient for RmcpProviderClient {
         params.arguments = request
             .arguments
             .and_then(|s| serde_json::from_str(&s).ok());
-        let fut = self.service.call_tool(params);
-        let rmcp_result = if let Some(timeout) = self.operation_timeout {
-            tokio::time::timeout(timeout, fut)
-                .await
-                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
-        } else {
-            fut.await
-        };
-        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
+        let result = self.execute(self.service.call_tool(params)).await?;
         let content = result
             .content
             .into_iter()
@@ -79,15 +77,7 @@ impl ProviderClient for RmcpProviderClient {
     }
 
     async fn list_resources(&self) -> Result<Vec<ResourceDescriptor>, ProviderError> {
-        let fut = self.service.list_resources(None);
-        let rmcp_result = if let Some(timeout) = self.operation_timeout {
-            tokio::time::timeout(timeout, fut)
-                .await
-                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
-        } else {
-            fut.await
-        };
-        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
+        let result = self.execute(self.service.list_resources(None)).await?;
         Ok(result
             .resources
             .into_iter()
@@ -102,15 +92,9 @@ impl ProviderClient for RmcpProviderClient {
     async fn list_resource_templates(
         &self,
     ) -> Result<Vec<ResourceTemplateDescriptor>, ProviderError> {
-        let fut = self.service.list_resource_templates(None);
-        let rmcp_result = if let Some(timeout) = self.operation_timeout {
-            tokio::time::timeout(timeout, fut)
-                .await
-                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
-        } else {
-            fut.await
-        };
-        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
+        let result = self
+            .execute(self.service.list_resource_templates(None))
+            .await?;
         Ok(result
             .resource_templates
             .into_iter()
@@ -127,30 +111,14 @@ impl ProviderClient for RmcpProviderClient {
         request: ResourceReadRequest,
     ) -> Result<ResourceReadResult, ProviderError> {
         let params = ReadResourceRequestParams::new(request.uri);
-        let fut = self.service.read_resource(params);
-        let rmcp_result = if let Some(timeout) = self.operation_timeout {
-            tokio::time::timeout(timeout, fut)
-                .await
-                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
-        } else {
-            fut.await
-        };
-        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
+        let result = self.execute(self.service.read_resource(params)).await?;
         Ok(ResourceReadResult {
             json: serde_json::to_string(&result).unwrap_or_default(),
         })
     }
 
     async fn list_prompts(&self) -> Result<Vec<PromptDescriptor>, ProviderError> {
-        let fut = self.service.list_prompts(None);
-        let rmcp_result = if let Some(timeout) = self.operation_timeout {
-            tokio::time::timeout(timeout, fut)
-                .await
-                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
-        } else {
-            fut.await
-        };
-        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
+        let result = self.execute(self.service.list_prompts(None)).await?;
         Ok(result
             .prompts
             .into_iter()
@@ -169,15 +137,7 @@ impl ProviderClient for RmcpProviderClient {
         params.arguments = request
             .arguments
             .and_then(|s| serde_json::from_str(&s).ok());
-        let fut = self.service.get_prompt(params);
-        let rmcp_result = if let Some(timeout) = self.operation_timeout {
-            tokio::time::timeout(timeout, fut)
-                .await
-                .map_err(|_| ProviderError::Service("operation timed out".to_string()))?
-        } else {
-            fut.await
-        };
-        let result = rmcp_result.map_err(|e| ProviderError::Service(e.to_string()))?;
+        let result = self.execute(self.service.get_prompt(params)).await?;
         Ok(PromptGetResult {
             json: serde_json::to_string(&result).unwrap_or_default(),
         })

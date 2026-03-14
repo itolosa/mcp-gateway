@@ -197,53 +197,39 @@ pub fn spawn_transport(
     Ok(process)
 }
 
-pub fn create_http_transport(
-    config: &HttpConfig,
-) -> Result<StreamableHttpClientTransport<reqwest::Client>, ProxyError> {
-    let custom_headers = config
-        .headers
-        .iter()
-        .map(|(key, value)| {
-            let header_name = http::HeaderName::try_from(key.as_str()).map_err(|e| {
-                ProxyError::HttpTransport {
-                    message: e.to_string(),
-                }
-            })?;
-            let header_value = http::HeaderValue::try_from(value.as_str()).map_err(|e| {
-                ProxyError::HttpTransport {
-                    message: e.to_string(),
-                }
-            })?;
-            Ok((header_name, header_value))
-        })
-        .collect::<Result<HashMap<_, _>, ProxyError>>()?;
-    let transport_config = StreamableHttpClientTransportConfig::with_uri(config.url.as_str())
-        .custom_headers(custom_headers);
-    Ok(StreamableHttpClientTransport::from_config(transport_config))
-}
-
 fn http_transport_err(e: impl std::fmt::Display) -> ProxyError {
     ProxyError::HttpTransport {
         message: e.to_string(),
     }
 }
 
+fn parse_custom_headers(
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<HashMap<http::HeaderName, http::HeaderValue>, ProxyError> {
+    headers
+        .iter()
+        .map(|(key, value)| {
+            let name = http::HeaderName::try_from(key.as_str()).map_err(http_transport_err)?;
+            let val = http::HeaderValue::try_from(value.as_str()).map_err(http_transport_err)?;
+            Ok((name, val))
+        })
+        .collect()
+}
+
+pub fn create_http_transport(
+    config: &HttpConfig,
+) -> Result<StreamableHttpClientTransport<reqwest::Client>, ProxyError> {
+    let custom_headers = parse_custom_headers(&config.headers)?;
+    let transport_config = StreamableHttpClientTransportConfig::with_uri(config.url.as_str())
+        .custom_headers(custom_headers);
+    Ok(StreamableHttpClientTransport::from_config(transport_config))
+}
+
 pub async fn create_oauth_http_transport(
     config: &HttpConfig,
     server_name: &str,
 ) -> Result<StreamableHttpClientTransport<AuthClient<reqwest::Client>>, ProxyError> {
-    let custom_headers = config
-        .headers
-        .iter()
-        .map(|(key, value)| {
-            let header_name =
-                http::HeaderName::try_from(key.as_str()).map_err(http_transport_err)?;
-            let header_value =
-                http::HeaderValue::try_from(value.as_str()).map_err(http_transport_err)?;
-            Ok((header_name, header_value))
-        })
-        .collect::<Result<HashMap<_, _>, ProxyError>>()?;
-
+    let custom_headers = parse_custom_headers(&config.headers)?;
     let default_config = OAuthConfig::default();
     let oauth_config = config.auth.as_ref().unwrap_or(&default_config);
 
