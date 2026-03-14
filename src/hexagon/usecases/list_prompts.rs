@@ -17,11 +17,19 @@ impl ListPrompts {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            for mut p in prompts {
-                p.name = encode(name, &p.name);
-                p.json = update_json_field(&p.json, "name", &p.name);
-                all.push(p);
-            }
+            let encoded: Vec<_> = prompts
+                .into_iter()
+                .filter(|p| entry.filter.is_allowed(&p.name))
+                .map(|p| {
+                    let encoded_name = encode(name, &p.name);
+                    let json = update_json_field(&p.json, "name", &encoded_name);
+                    PromptDescriptor {
+                        name: encoded_name,
+                        json,
+                    }
+                })
+                .collect();
+            all.extend(encoded);
         }
         Ok(all)
     }

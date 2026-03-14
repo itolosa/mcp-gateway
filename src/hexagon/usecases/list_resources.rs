@@ -19,13 +19,21 @@ impl ListResources {
                 Ok(r) => r,
                 Err(_) => continue,
             };
-            for mut r in resources {
-                r.uri = encode(name, &r.uri);
-                r.name = encode(name, &r.name);
-                r.json = update_json_field(&r.json, "uri", &r.uri);
-                r.json = update_json_field(&r.json, "name", &r.name);
-                all.push(r);
-            }
+            let encoded: Vec<_> = resources
+                .into_iter()
+                .map(|r| {
+                    let uri = encode(name, &r.uri);
+                    let encoded_name = encode(name, &r.name);
+                    let json = update_json_field(&r.json, "uri", &uri);
+                    let json = update_json_field(&json, "name", &encoded_name);
+                    ResourceDescriptor {
+                        uri,
+                        name: encoded_name,
+                        json,
+                    }
+                })
+                .collect();
+            all.extend(encoded);
         }
         Ok(all)
     }
@@ -43,13 +51,21 @@ impl ListResourceTemplates {
                 Ok(t) => t,
                 Err(_) => continue,
             };
-            for mut t in templates {
-                t.uri_template = encode(name, &t.uri_template);
-                t.name = encode(name, &t.name);
-                t.json = update_json_field(&t.json, "uriTemplate", &t.uri_template);
-                t.json = update_json_field(&t.json, "name", &t.name);
-                all.push(t);
-            }
+            let encoded: Vec<_> = templates
+                .into_iter()
+                .map(|t| {
+                    let uri_template = encode(name, &t.uri_template);
+                    let encoded_name = encode(name, &t.name);
+                    let json = update_json_field(&t.json, "uriTemplate", &uri_template);
+                    let json = update_json_field(&json, "name", &encoded_name);
+                    ResourceTemplateDescriptor {
+                        uri_template,
+                        name: encoded_name,
+                        json,
+                    }
+                })
+                .collect();
+            all.extend(encoded);
         }
         Ok(all)
     }

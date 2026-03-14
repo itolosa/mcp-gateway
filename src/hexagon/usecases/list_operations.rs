@@ -20,12 +20,15 @@ impl ListOperations {
                 Ok(ops) => ops,
                 Err(_) => continue,
             };
-            for mut op in operations {
-                if entry.filter.is_allowed(&op.name) {
-                    op.name = encode(name, &op.name);
-                    all_operations.push(op);
-                }
-            }
+            let encoded: Vec<_> = operations
+                .into_iter()
+                .filter(|op| entry.filter.is_allowed(&op.name))
+                .map(|op| OperationDescriptor {
+                    name: encode(name, &op.name),
+                    ..op
+                })
+                .collect();
+            all_operations.extend(encoded);
         }
         all_operations.extend(cli_runner.list_operations());
         Ok(all_operations)

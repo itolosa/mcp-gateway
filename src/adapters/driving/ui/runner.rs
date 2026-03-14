@@ -23,47 +23,42 @@ pub fn run_rules<S: ProviderConfigStore<Entry = McpServerEntry>>(
 ) -> Result<(), RegistryError> {
     let servers = service.list_providers()?;
     let filter_name = args.name.as_deref();
-    let mut printed = false;
-    for (server_name, entry) in &servers {
-        if let Some(name) = filter_name {
-            if name != server_name.as_str() {
-                continue;
+    let server_count = servers
+        .iter()
+        .filter(|(server_name, _)| filter_name.is_none_or(|name| name == server_name.as_str()))
+        .map(|(server_name, entry)| {
+            let (server_type, target) = describe_entry(entry);
+            let allowed = entry.allowed_operations();
+            let denied = entry.denied_operations();
+            let policy = policy_label(allowed, denied);
+            let _ = writeln!(out, "{server_name} ({server_type} → {target})");
+            let _ = writeln!(out, "  policy: {policy}");
+            for tool in allowed {
+                let prefixed = crate::hexagon::usecases::mapping::encode(server_name, tool);
+                let _ = writeln!(out, "  ALLOW  {tool:<40} → {prefixed}");
             }
-        }
-        let (server_type, target) = describe_entry(entry);
-        let allowed = entry.allowed_operations();
-        let denied = entry.denied_operations();
-        let policy = policy_label(allowed, denied);
-        let _ = writeln!(out, "{server_name} ({server_type} → {target})");
-        let _ = writeln!(out, "  policy: {policy}");
-        for tool in allowed {
-            let prefixed = crate::hexagon::usecases::mapping::encode(server_name, tool);
-            let _ = writeln!(out, "  ALLOW  {tool:<40} → {prefixed}");
-        }
-        for tool in denied {
-            let _ = writeln!(out, "  DENY   {tool}");
-        }
-        if allowed.is_empty() && denied.is_empty() {
-            let _ = writeln!(out, "  (no rules — all upstream tools forwarded)");
-        }
-        let _ = writeln!(out);
-        printed = true;
-    }
-    for (name, def) in cli_operations {
-        if let Some(filter) = filter_name {
-            if filter != name.as_str() {
-                continue;
+            for tool in denied {
+                let _ = writeln!(out, "  DENY   {tool}");
             }
-        }
-        let desc = def.description.as_deref().unwrap_or_else(|| &def.command);
-        let _ = writeln!(out, "{name} (cli → {cmd})", cmd = def.command);
-        let _ = writeln!(out, "  policy: open");
-        let _ = writeln!(out, "  ALLOW  {desc:<40} → {name}");
-        let _ = writeln!(out);
-        printed = true;
-    }
+            if allowed.is_empty() && denied.is_empty() {
+                let _ = writeln!(out, "  (no rules — all upstream tools forwarded)");
+            }
+            let _ = writeln!(out);
+        })
+        .count();
+    let cli_count = cli_operations
+        .iter()
+        .filter(|(name, _)| filter_name.is_none_or(|f| f == name.as_str()))
+        .map(|(name, def)| {
+            let desc = def.description.as_deref().unwrap_or_else(|| &def.command);
+            let _ = writeln!(out, "{name} (cli → {cmd})", cmd = def.command);
+            let _ = writeln!(out, "  policy: open");
+            let _ = writeln!(out, "  ALLOW  {desc:<40} → {name}");
+            let _ = writeln!(out);
+        })
+        .count();
     if let Some(name) = filter_name {
-        if !printed {
+        if server_count + cli_count == 0 {
             return Err(RegistryError::NotFound {
                 name: name.to_string(),
             });

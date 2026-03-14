@@ -111,16 +111,14 @@ fn parse_callback_params(request: &str) -> Option<CallbackParams> {
     let path = request_line.split_whitespace().nth(1)?;
     let query = path.split('?').nth(1)?;
 
-    let mut code = None;
-    let mut state = None;
-
-    for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
-        match key.as_ref() {
-            "code" => code = Some(value.into_owned()),
-            "state" => state = Some(value.into_owned()),
-            _ => {}
-        }
-    }
+    let (code, state) = url::form_urlencoded::parse(query.as_bytes()).fold(
+        (None, None),
+        |(code, state), (key, value)| match key.as_ref() {
+            "code" => (Some(value.into_owned()), state),
+            "state" => (code, Some(value.into_owned())),
+            _ => (code, state),
+        },
+    );
 
     Some(CallbackParams {
         code: code?,

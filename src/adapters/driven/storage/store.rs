@@ -75,8 +75,11 @@ impl ProviderConfigStore for FileConfigStore {
     }
 
     fn save_entries(&self, entries: BTreeMap<String, McpServerEntry>) -> Result<(), String> {
-        let mut config = ConfigStore::load(self).map_err(|e| e.to_string())?;
-        config.mcp_servers = entries;
+        let config = ConfigStore::load(self).map_err(|e| e.to_string())?;
+        let config = GatewayConfig {
+            mcp_servers: entries,
+            ..config
+        };
         ConfigStore::save(self, &config).map_err(|e| e.to_string())
     }
 }
