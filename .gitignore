@@ -4,3 +4,4 @@ mutants.out*/
 *.profraw
 CLAUDE.md
 .claude/
+.mcp.json

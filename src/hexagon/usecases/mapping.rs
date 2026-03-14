@@ -8,6 +8,19 @@ pub fn decode(name: &str) -> Option<(&str, &str)> {
     name.split_once(SEPARATOR)
 }
 
+pub fn update_json_field(json: &str, key: &str, value: &str) -> String {
+    let Ok(mut obj) = serde_json::from_str::<serde_json::Value>(json) else {
+        return json.to_string();
+    };
+    if let Some(map) = obj.as_object_mut() {
+        map.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
+    }
+    serde_json::to_string(&obj).unwrap_or_else(|_| json.to_string())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -73,5 +86,27 @@ mod tests {
         let (server, tool) = decode(&prefixed).unwrap();
         assert_eq!(server, "myserver");
         assert_eq!(tool, "mytool");
+    }
+
+    #[test]
+    fn update_json_field_updates_existing_field() {
+        let json = r#"{"name":"old","description":"test"}"#;
+        let result = update_json_field(json, "name", "new");
+        assert!(result.contains(r#""name":"new""#));
+        assert!(result.contains(r#""description":"test""#));
+    }
+
+    #[test]
+    fn update_json_field_adds_missing_field() {
+        let json = r#"{"description":"test"}"#;
+        let result = update_json_field(json, "name", "added");
+        assert!(result.contains(r#""name":"added""#));
+    }
+
+    #[test]
+    fn update_json_field_returns_original_for_invalid_json() {
+        let json = "not json";
+        let result = update_json_field(json, "name", "value");
+        assert_eq!(result, "not json");
     }
 }

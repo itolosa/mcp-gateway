@@ -27,6 +27,60 @@ pub struct OperationCallResult {
     pub is_error: bool,
 }
 
+/// A resource descriptor exposed by the gateway.
+#[derive(Debug, Clone)]
+pub struct ResourceDescriptor {
+    pub uri: String,
+    pub name: String,
+    /// Opaque JSON string — the hexagon passes it through untouched.
+    pub json: String,
+}
+
+/// A resource template descriptor exposed by the gateway.
+#[derive(Debug, Clone)]
+pub struct ResourceTemplateDescriptor {
+    pub uri_template: String,
+    pub name: String,
+    /// Opaque JSON string — the hexagon passes it through untouched.
+    pub json: String,
+}
+
+/// A request to read a resource.
+#[derive(Debug, Clone)]
+pub struct ResourceReadRequest {
+    pub uri: String,
+}
+
+/// Result of reading a resource.
+#[derive(Debug, Clone)]
+pub struct ResourceReadResult {
+    /// Opaque JSON string — the hexagon passes it through untouched.
+    pub json: String,
+}
+
+/// A prompt descriptor exposed by the gateway.
+#[derive(Debug, Clone)]
+pub struct PromptDescriptor {
+    pub name: String,
+    /// Opaque JSON string — the hexagon passes it through untouched.
+    pub json: String,
+}
+
+/// A request to get a prompt.
+#[derive(Debug, Clone)]
+pub struct PromptGetRequest {
+    pub name: String,
+    /// Opaque JSON arguments string — the hexagon passes it through untouched.
+    pub arguments: Option<String>,
+}
+
+/// Result of getting a prompt.
+#[derive(Debug, Clone)]
+pub struct PromptGetResult {
+    /// Opaque JSON string — the hexagon passes it through untouched.
+    pub json: String,
+}
+
 /// Error from provider operations.
 #[derive(Debug)]
 pub enum ProviderError {
@@ -88,6 +142,23 @@ pub trait ProviderClient: Send + Sync {
         &self,
         request: OperationCallRequest,
     ) -> impl Future<Output = Result<OperationCallResult, ProviderError>> + Send;
+    fn list_resources(
+        &self,
+    ) -> impl Future<Output = Result<Vec<ResourceDescriptor>, ProviderError>> + Send;
+    fn list_resource_templates(
+        &self,
+    ) -> impl Future<Output = Result<Vec<ResourceTemplateDescriptor>, ProviderError>> + Send;
+    fn read_resource(
+        &self,
+        request: ResourceReadRequest,
+    ) -> impl Future<Output = Result<ResourceReadResult, ProviderError>> + Send;
+    fn list_prompts(
+        &self,
+    ) -> impl Future<Output = Result<Vec<PromptDescriptor>, ProviderError>> + Send;
+    fn get_prompt(
+        &self,
+        request: PromptGetRequest,
+    ) -> impl Future<Output = Result<PromptGetResult, ProviderError>> + Send;
 }
 
 /// Driven port: operation policy for provider operations.

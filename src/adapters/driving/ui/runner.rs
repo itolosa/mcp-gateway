@@ -4,13 +4,62 @@ use std::io::Write;
 
 use super::command::{
     AddArgs, AllowlistModifyArgs, AllowlistShowArgs, DenylistModifyArgs, DenylistShowArgs,
-    RemoveArgs, TransportType,
+    RemoveArgs, ToolsArgs, TransportType,
 };
 use crate::adapters::driven::configuration::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
 use crate::hexagon::ports::ProviderConfigStore;
 use crate::hexagon::usecases::registry_error::RegistryError;
 use crate::hexagon::usecases::registry_service::RegistryService;
+
+pub fn run_tools<S: ProviderConfigStore<Entry = McpServerEntry>>(
+    service: &RegistryService<S>,
+    args: ToolsArgs,
+    out: &mut impl Write,
+) -> Result<(), RegistryError> {
+    let servers = service.list_providers()?;
+    let entries: Vec<(&str, &McpServerEntry)> = match &args.name {
+        Some(name) => {
+            let entry = servers
+                .get(name.as_str())
+                .ok_or_else(|| RegistryError::NotFound { name: name.clone() })?;
+            vec![(name.as_str(), entry)]
+        }
+        None => servers.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+    };
+    if entries.is_empty() {
+        return Ok(());
+    }
+    for (server_name, entry) in &entries {
+        let (server_type, target) = describe_entry(entry);
+        let allowed = entry.allowed_operations();
+        let denied = entry.denied_operations();
+        let policy = policy_label(allowed, denied);
+        let _ = writeln!(out, "{server_name} ({server_type} → {target})");
+        let _ = writeln!(out, "  policy: {policy}");
+        for tool in allowed {
+            let prefixed = crate::hexagon::usecases::mapping::encode(server_name, tool);
+            let _ = writeln!(out, "  ALLOW  {tool:<40} → {prefixed}");
+        }
+        for tool in denied {
+            let _ = writeln!(out, "  DENY   {tool}");
+        }
+        if allowed.is_empty() && denied.is_empty() {
+            let _ = writeln!(out, "  (no rules — all upstream tools forwarded)");
+        }
+        let _ = writeln!(out);
+    }
+    Ok(())
+}
+
+fn policy_label(allowed: &[String], denied: &[String]) -> &'static str {
+    match (allowed.is_empty(), denied.is_empty()) {
+        (true, true) => "open",
+        (false, true) => "allowlist",
+        (true, false) => "denylist",
+        (false, false) => "allowlist + denylist",
+    }
+}
 
 pub fn run_list<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
@@ -821,6 +870,194 @@ mod tests {
         };
         let mut buf = Vec::new();
         let result = run_denylist_show(&service, args, &mut buf);
+        assert!(matches!(result, Err(RegistryError::Storage(_))));
+    }
+
+    #[test]
+    fn policy_label_open_when_no_rules() {
+        assert_eq!(policy_label(&[], &[]), "open");
+    }
+
+    #[test]
+    fn policy_label_allowlist_when_only_allowed() {
+        let allowed = vec!["read".to_string()];
+        assert_eq!(policy_label(&allowed, &[]), "allowlist");
+    }
+
+    #[test]
+    fn policy_label_denylist_when_only_denied() {
+        let denied = vec!["delete".to_string()];
+        assert_eq!(policy_label(&[], &denied), "denylist");
+    }
+
+    #[test]
+    fn policy_label_both_when_allowed_and_denied() {
+        let allowed = vec!["read".to_string()];
+        let denied = vec!["delete".to_string()];
+        assert_eq!(policy_label(&allowed, &denied), "allowlist + denylist");
+    }
+
+    #[test]
+    fn run_tools_empty_config_writes_nothing() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = ToolsArgs { name: None };
+        let mut buf = Vec::new();
+        run_tools(&service, args, &mut buf).unwrap();
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn run_tools_shows_open_policy_when_no_rules() {
+        let store = FakeConfigStore::new(stdio_config("echo"));
+        let service = RegistryService::new(store);
+
+        let args = ToolsArgs { name: None };
+        let mut buf = Vec::new();
+        run_tools(&service, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("test (stdio"));
+        assert!(output.contains("policy: open"));
+        assert!(output.contains("no rules"));
+    }
+
+    #[test]
+    fn run_tools_shows_allowlist_with_prefixed_names() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "my-server".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "node".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_operations: vec!["read".to_string(), "search".to_string()],
+                denied_operations: vec![],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = ToolsArgs { name: None };
+        let mut buf = Vec::new();
+        run_tools(&service, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("policy: allowlist"));
+        assert!(output.contains("ALLOW  read"));
+        assert!(output.contains("→ my-server__read"));
+        assert!(output.contains("ALLOW  search"));
+        assert!(output.contains("→ my-server__search"));
+        assert!(!output.contains("no rules"));
+    }
+
+    #[test]
+    fn run_tools_shows_denylist() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "srv".to_string(),
+            McpServerEntry::Http(HttpConfig {
+                url: "https://example.com".to_string(),
+                headers: BTreeMap::new(),
+                allowed_operations: vec![],
+                denied_operations: vec!["delete".to_string()],
+                auth: None,
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = ToolsArgs { name: None };
+        let mut buf = Vec::new();
+        run_tools(&service, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("policy: denylist"));
+        assert!(output.contains("DENY   delete"));
+        assert!(!output.contains("no rules"));
+    }
+
+    #[test]
+    fn run_tools_shows_combined_policy() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "combo".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "cmd".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_operations: vec!["read".to_string()],
+                denied_operations: vec!["exec".to_string()],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = ToolsArgs { name: None };
+        let mut buf = Vec::new();
+        run_tools(&service, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("policy: allowlist + denylist"));
+        assert!(output.contains("ALLOW  read"));
+        assert!(output.contains("DENY   exec"));
+        assert!(!output.contains("no rules"));
+    }
+
+    #[test]
+    fn run_tools_filters_by_server_name() {
+        let mut config = GatewayConfig::default();
+        config.mcp_servers.insert(
+            "alpha".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "a".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_operations: vec!["tool_a".to_string()],
+                denied_operations: vec![],
+            }),
+        );
+        config.mcp_servers.insert(
+            "beta".to_string(),
+            McpServerEntry::Stdio(StdioConfig {
+                command: "b".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+                allowed_operations: vec!["tool_b".to_string()],
+                denied_operations: vec![],
+            }),
+        );
+        let store = FakeConfigStore::new(config);
+        let service = RegistryService::new(store);
+
+        let args = ToolsArgs {
+            name: Some("alpha".to_string()),
+        };
+        let mut buf = Vec::new();
+        run_tools(&service, args, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("alpha"));
+        assert!(output.contains("tool_a"));
+        assert!(!output.contains("beta"));
+        assert!(!output.contains("tool_b"));
+    }
+
+    #[test]
+    fn run_tools_server_not_found() {
+        let store = FakeConfigStore::new(GatewayConfig::default());
+        let service = RegistryService::new(store);
+
+        let args = ToolsArgs {
+            name: Some("nope".to_string()),
+        };
+        let mut buf = Vec::new();
+        let result = run_tools(&service, args, &mut buf);
+        assert!(matches!(result, Err(RegistryError::NotFound { .. })));
+    }
+
+    #[test]
+    fn run_tools_store_error_propagates() {
+        let service = RegistryService::new(FakeConfigStore::failing());
+        let args = ToolsArgs { name: None };
+        let mut buf = Vec::new();
+        let result = run_tools(&service, args, &mut buf);
         assert!(matches!(result, Err(RegistryError::Storage(_))));
     }
 
