@@ -947,6 +947,7 @@ mod tests {
         assert!(output.contains("→ my-server__read"));
         assert!(output.contains("ALLOW  search"));
         assert!(output.contains("→ my-server__search"));
+        assert!(!output.contains("no rules"));
     }
 
     #[test]
@@ -971,6 +972,7 @@ mod tests {
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("policy: denylist"));
         assert!(output.contains("DENY   delete"));
+        assert!(!output.contains("no rules"));
     }
 
     #[test]
@@ -996,6 +998,7 @@ mod tests {
         assert!(output.contains("policy: allowlist + denylist"));
         assert!(output.contains("ALLOW  read"));
         assert!(output.contains("DENY   exec"));
+        assert!(!output.contains("no rules"));
     }
 
     #[test]
