@@ -25,11 +25,11 @@ use mcp_gateway::adapters::driving::execution::process::status_socket::{
     self, GatewayStatusReport, ProviderStatus,
 };
 use mcp_gateway::adapters::driving::ui::command::{
-    AllowlistAction, Cli, Command, DenylistAction, DownstreamTransport,
+    AllowlistAction, Cli, Command, DenylistAction, DownstreamTransport, ToolsArgs,
 };
 use mcp_gateway::adapters::driving::ui::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
-    run_denylist_remove, run_denylist_show, run_list, run_remove, run_run, run_tools,
+    run_denylist_remove, run_denylist_show, run_list, run_remove, run_rules, run_run, run_tools,
 };
 use mcp_gateway::hexagon::entities::policy::allowlist::AllowlistPolicy;
 use mcp_gateway::hexagon::entities::policy::compound::CompoundPolicy;
@@ -122,9 +122,12 @@ async fn dispatch_command<S: ProviderConfigStore<Entry = McpServerEntry> + Confi
         Some(Command::Oauth(args)) => dispatch_oauth(registry, args)
             .await
             .map_err(|e| e.to_string()),
-        Some(Command::Tools(args)) => {
-            run_tools(registry, args, &mut std::io::stdout()).map_err(|e| e.to_string())
+        Some(Command::Rules(args)) => {
+            run_rules(registry, args, &mut std::io::stdout()).map_err(|e| e.to_string())
         }
+        Some(Command::Tools(args)) => dispatch_tools(registry, args, verbose)
+            .await
+            .map_err(|e| e.to_string()),
     }
 }
 
@@ -339,6 +342,18 @@ fn transport_label(transport: &DownstreamTransport) -> &'static str {
         DownstreamTransport::Stdio => "stdio",
         DownstreamTransport::Http => "http",
     }
+}
+
+async fn dispatch_tools<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(
+    registry: &RegistryService<S>,
+    args: ToolsArgs,
+    verbose: bool,
+) -> Result<(), ProxyError> {
+    run_run(registry, |servers| async move {
+        let (upstreams, _statuses) = build_upstreams(servers, verbose).await?;
+        run_tools(&upstreams, args.name.as_deref(), &mut std::io::stdout()).await
+    })
+    .await
 }
 
 async fn run_gateway<S: ProviderConfigStore<Entry = McpServerEntry> + ConfigStore>(

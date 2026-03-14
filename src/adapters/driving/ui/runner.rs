@@ -4,17 +4,18 @@ use std::io::Write;
 
 use super::command::{
     AddArgs, AllowlistModifyArgs, AllowlistShowArgs, DenylistModifyArgs, DenylistShowArgs,
-    RemoveArgs, ToolsArgs, TransportType,
+    RemoveArgs, RulesArgs, TransportType,
 };
 use crate::adapters::driven::configuration::model::{HttpConfig, McpServerEntry, StdioConfig};
 use crate::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
-use crate::hexagon::ports::ProviderConfigStore;
+use crate::hexagon::ports::{OperationPolicy, ProviderClient, ProviderConfigStore};
+use crate::hexagon::usecases::gateway::ProviderHandle;
 use crate::hexagon::usecases::registry_error::RegistryError;
 use crate::hexagon::usecases::registry_service::RegistryService;
 
-pub fn run_tools<S: ProviderConfigStore<Entry = McpServerEntry>>(
+pub fn run_rules<S: ProviderConfigStore<Entry = McpServerEntry>>(
     service: &RegistryService<S>,
-    args: ToolsArgs,
+    args: RulesArgs,
     out: &mut impl Write,
 ) -> Result<(), RegistryError> {
     let servers = service.list_providers()?;
@@ -46,6 +47,52 @@ pub fn run_tools<S: ProviderConfigStore<Entry = McpServerEntry>>(
         }
         if allowed.is_empty() && denied.is_empty() {
             let _ = writeln!(out, "  (no rules — all upstream tools forwarded)");
+        }
+        let _ = writeln!(out);
+    }
+    Ok(())
+}
+
+pub async fn run_tools<U: ProviderClient, F: OperationPolicy>(
+    providers: &BTreeMap<String, ProviderHandle<U, F>>,
+    name_filter: Option<&str>,
+    out: &mut impl Write,
+) -> Result<(), ProxyError> {
+    let entries: Vec<(&str, &ProviderHandle<U, F>)> = match name_filter {
+        Some(name) => {
+            let handle = providers
+                .get(name)
+                .ok_or_else(|| ProxyError::UpstreamInit {
+                    message: format!("server '{name}' not found"),
+                })?;
+            vec![(name, handle)]
+        }
+        None => providers.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+    };
+    if entries.is_empty() {
+        return Ok(());
+    }
+    for (server_name, handle) in &entries {
+        let upstream_tools = match handle.client.list_operations().await {
+            Ok(tools) => tools,
+            Err(e) => {
+                let _ = writeln!(out, "{server_name}");
+                let _ = writeln!(out, "  ERROR  {e}");
+                let _ = writeln!(out);
+                continue;
+            }
+        };
+        let _ = writeln!(out, "{server_name}");
+        if upstream_tools.is_empty() {
+            let _ = writeln!(out, "  (no tools)");
+        }
+        for tool in &upstream_tools {
+            if handle.filter.is_allowed(&tool.name) {
+                let prefixed = crate::hexagon::usecases::mapping::encode(server_name, &tool.name);
+                let _ = writeln!(out, "  ALLOW  {:<40} → {prefixed}", tool.name);
+            } else {
+                let _ = writeln!(out, "  BLOCK  {}", tool.name);
+            }
         }
         let _ = writeln!(out);
     }
@@ -898,24 +945,24 @@ mod tests {
     }
 
     #[test]
-    fn run_tools_empty_config_writes_nothing() {
+    fn run_rules_empty_config_writes_nothing() {
         let store = FakeConfigStore::new(GatewayConfig::default());
         let service = RegistryService::new(store);
 
-        let args = ToolsArgs { name: None };
+        let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_tools(&service, args, &mut buf).unwrap();
+        run_rules(&service, args, &mut buf).unwrap();
         assert!(buf.is_empty());
     }
 
     #[test]
-    fn run_tools_shows_open_policy_when_no_rules() {
+    fn run_rules_shows_open_policy_when_no_rules() {
         let store = FakeConfigStore::new(stdio_config("echo"));
         let service = RegistryService::new(store);
 
-        let args = ToolsArgs { name: None };
+        let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_tools(&service, args, &mut buf).unwrap();
+        run_rules(&service, args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("test (stdio"));
         assert!(output.contains("policy: open"));
@@ -923,7 +970,7 @@ mod tests {
     }
 
     #[test]
-    fn run_tools_shows_allowlist_with_prefixed_names() {
+    fn run_rules_shows_allowlist_with_prefixed_names() {
         let mut config = GatewayConfig::default();
         config.mcp_servers.insert(
             "my-server".to_string(),
@@ -938,9 +985,9 @@ mod tests {
         let store = FakeConfigStore::new(config);
         let service = RegistryService::new(store);
 
-        let args = ToolsArgs { name: None };
+        let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_tools(&service, args, &mut buf).unwrap();
+        run_rules(&service, args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("policy: allowlist"));
         assert!(output.contains("ALLOW  read"));
@@ -951,7 +998,7 @@ mod tests {
     }
 
     #[test]
-    fn run_tools_shows_denylist() {
+    fn run_rules_shows_denylist() {
         let mut config = GatewayConfig::default();
         config.mcp_servers.insert(
             "srv".to_string(),
@@ -966,9 +1013,9 @@ mod tests {
         let store = FakeConfigStore::new(config);
         let service = RegistryService::new(store);
 
-        let args = ToolsArgs { name: None };
+        let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_tools(&service, args, &mut buf).unwrap();
+        run_rules(&service, args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("policy: denylist"));
         assert!(output.contains("DENY   delete"));
@@ -976,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn run_tools_shows_combined_policy() {
+    fn run_rules_shows_combined_policy() {
         let mut config = GatewayConfig::default();
         config.mcp_servers.insert(
             "combo".to_string(),
@@ -991,9 +1038,9 @@ mod tests {
         let store = FakeConfigStore::new(config);
         let service = RegistryService::new(store);
 
-        let args = ToolsArgs { name: None };
+        let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        run_tools(&service, args, &mut buf).unwrap();
+        run_rules(&service, args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("policy: allowlist + denylist"));
         assert!(output.contains("ALLOW  read"));
@@ -1002,7 +1049,7 @@ mod tests {
     }
 
     #[test]
-    fn run_tools_filters_by_server_name() {
+    fn run_rules_filters_by_server_name() {
         let mut config = GatewayConfig::default();
         config.mcp_servers.insert(
             "alpha".to_string(),
@@ -1027,11 +1074,11 @@ mod tests {
         let store = FakeConfigStore::new(config);
         let service = RegistryService::new(store);
 
-        let args = ToolsArgs {
+        let args = RulesArgs {
             name: Some("alpha".to_string()),
         };
         let mut buf = Vec::new();
-        run_tools(&service, args, &mut buf).unwrap();
+        run_rules(&service, args, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("alpha"));
         assert!(output.contains("tool_a"));
@@ -1040,25 +1087,193 @@ mod tests {
     }
 
     #[test]
-    fn run_tools_server_not_found() {
+    fn run_rules_server_not_found() {
         let store = FakeConfigStore::new(GatewayConfig::default());
         let service = RegistryService::new(store);
 
-        let args = ToolsArgs {
+        let args = RulesArgs {
             name: Some("nope".to_string()),
         };
         let mut buf = Vec::new();
-        let result = run_tools(&service, args, &mut buf);
+        let result = run_rules(&service, args, &mut buf);
         assert!(matches!(result, Err(RegistryError::NotFound { .. })));
     }
 
     #[test]
-    fn run_tools_store_error_propagates() {
+    fn run_rules_store_error_propagates() {
         let service = RegistryService::new(FakeConfigStore::failing());
-        let args = ToolsArgs { name: None };
+        let args = RulesArgs { name: None };
         let mut buf = Vec::new();
-        let result = run_tools(&service, args, &mut buf);
+        let result = run_rules(&service, args, &mut buf);
         assert!(matches!(result, Err(RegistryError::Storage(_))));
+    }
+
+    use crate::hexagon::entities::policy::allowlist::AllowlistPolicy;
+    use crate::hexagon::entities::policy::compound::CompoundPolicy;
+    use crate::hexagon::entities::policy::denylist::DenylistPolicy;
+    use crate::hexagon::ports::OperationDescriptor;
+    use crate::hexagon::usecases::gateway::test_helpers::{FailingUpstream, TestProvider};
+    use crate::hexagon::usecases::gateway::ProviderHandle;
+
+    type TestFilter = CompoundPolicy<AllowlistPolicy, DenylistPolicy>;
+
+    fn provider_with_tools(names: &[&str]) -> TestProvider {
+        TestProvider {
+            operations: names
+                .iter()
+                .map(|n| OperationDescriptor {
+                    name: n.to_string(),
+                    description: None,
+                    schema: "{}".to_string(),
+                })
+                .collect(),
+            resources: vec![],
+            templates: vec![],
+            prompts: vec![],
+        }
+    }
+
+    fn passthrough() -> TestFilter {
+        CompoundPolicy::new(AllowlistPolicy::new(vec![]), DenylistPolicy::new(vec![]))
+    }
+
+    #[tokio::test]
+    async fn run_tools_shows_allowed_tools_from_provider() {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "srv".to_string(),
+            ProviderHandle {
+                client: provider_with_tools(&["read", "write"]),
+                filter: passthrough(),
+            },
+        );
+        let mut buf = Vec::new();
+        run_tools(&providers, None, &mut buf).await.unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("srv"));
+        assert!(output.contains("ALLOW  read"));
+        assert!(output.contains("→ srv__read"));
+        assert!(output.contains("ALLOW  write"));
+        assert!(output.contains("→ srv__write"));
+    }
+
+    #[tokio::test]
+    async fn run_tools_shows_blocked_tools_when_denied() {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "srv".to_string(),
+            ProviderHandle {
+                client: provider_with_tools(&["read", "delete"]),
+                filter: CompoundPolicy::new(
+                    AllowlistPolicy::new(vec![]),
+                    DenylistPolicy::new(vec!["delete".to_string()]),
+                ),
+            },
+        );
+        let mut buf = Vec::new();
+        run_tools(&providers, None, &mut buf).await.unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("ALLOW  read"));
+        assert!(output.contains("BLOCK  delete"));
+        assert!(!output.contains("ALLOW  delete"));
+    }
+
+    #[tokio::test]
+    async fn run_tools_shows_blocked_tools_when_not_in_allowlist() {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "srv".to_string(),
+            ProviderHandle {
+                client: provider_with_tools(&["read", "write"]),
+                filter: CompoundPolicy::new(
+                    AllowlistPolicy::new(vec!["read".to_string()]),
+                    DenylistPolicy::new(vec![]),
+                ),
+            },
+        );
+        let mut buf = Vec::new();
+        run_tools(&providers, None, &mut buf).await.unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("ALLOW  read"));
+        assert!(output.contains("BLOCK  write"));
+    }
+
+    #[tokio::test]
+    async fn run_tools_empty_providers_writes_nothing() {
+        let providers: BTreeMap<String, ProviderHandle<TestProvider, TestFilter>> = BTreeMap::new();
+        let mut buf = Vec::new();
+        run_tools(&providers, None, &mut buf).await.unwrap();
+        assert!(buf.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_tools_filters_by_server_name() {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "alpha".to_string(),
+            ProviderHandle {
+                client: provider_with_tools(&["tool_a"]),
+                filter: passthrough(),
+            },
+        );
+        providers.insert(
+            "beta".to_string(),
+            ProviderHandle {
+                client: provider_with_tools(&["tool_b"]),
+                filter: passthrough(),
+            },
+        );
+        let mut buf = Vec::new();
+        run_tools(&providers, Some("alpha"), &mut buf)
+            .await
+            .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("alpha"));
+        assert!(output.contains("tool_a"));
+        assert!(!output.contains("beta"));
+    }
+
+    #[tokio::test]
+    async fn run_tools_server_not_found_returns_error() {
+        let providers: BTreeMap<String, ProviderHandle<TestProvider, TestFilter>> = BTreeMap::new();
+        let mut buf = Vec::new();
+        let result = run_tools(&providers, Some("nope"), &mut buf).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn run_tools_shows_error_for_failing_provider() {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "bad".to_string(),
+            ProviderHandle {
+                client: FailingUpstream,
+                filter: passthrough(),
+            },
+        );
+        let mut buf = Vec::new();
+        run_tools(&providers, None, &mut buf).await.unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("bad"));
+        assert!(output.contains("ERROR"));
+        assert!(output.contains("connection closed"));
+    }
+
+    #[tokio::test]
+    async fn run_tools_shows_no_tools_for_empty_provider() {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "empty".to_string(),
+            ProviderHandle {
+                client: provider_with_tools(&[]),
+                filter: passthrough(),
+            },
+        );
+        let mut buf = Vec::new();
+        run_tools(&providers, None, &mut buf).await.unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("empty"));
+        assert!(output.contains("(no tools)"));
     }
 
     async fn failing_proxy(_entries: BTreeMap<String, McpServerEntry>) -> Result<(), ProxyError> {
