@@ -2,9 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use mcp_gateway::adapters::driven::configuration::model::OAuthConfig;
-use mcp_gateway::adapters::driven::connectivity::oauth::callback::CallbackParams;
 use mcp_gateway::adapters::driven::connectivity::oauth::create_oauth_transport;
-use mcp_gateway::adapters::driven::connectivity::oauth::create_oauth_transport_with;
 use mcp_gateway::adapters::driven::connectivity::oauth::credentials::FileCredentialStore;
 use mcp_gateway::adapters::driven::connectivity::oauth::error::OAuthError;
 use rmcp::transport::auth::{CredentialStore, StoredCredentials};
@@ -225,14 +223,6 @@ async fn clear_permission_error_returns_error() {
 }
 
 // -- callback.rs tests --
-// NOTE: parse_callback_params, bind_err, timeout_err, accept_err, read_err,
-// and accept_callback are all private functions in callback.rs. They cannot be
-// tested directly from integration tests.
-//
-// run_callback_on_listener and run_callback_server_with_timeout are pub(crate).
-//
-// The following tests exercise the callback server through the public
-// run_callback_server function where possible.
 
 #[tokio::test]
 async fn run_callback_server_bind_conflict_returns_error() {
@@ -241,49 +231,64 @@ async fn run_callback_server_bind_conflict_returns_error() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
 
-    // Try to bind same port
     let result = run_callback_server(port).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("bind to port"));
-    // Keep listener alive
     drop(listener);
 }
 
-// NOTE: The following callback tests from the original code cannot be migrated
-// because they depend on private or pub(crate) functions:
-//   - parse_valid_callback_params (private parse_callback_params)
-//   - parse_url_encoded_params (private parse_callback_params)
-//   - parse_missing_code_returns_none (private parse_callback_params)
-//   - parse_missing_state_returns_none (private parse_callback_params)
-//   - parse_no_query_string_returns_none (private parse_callback_params)
-//   - parse_empty_request_returns_none (private parse_callback_params)
-//   - parse_extra_params_ignored (private parse_callback_params)
-//   - bind_err_formats_message (private bind_err)
-//   - timeout_err_returns_timeout_message (private timeout_err)
-//   - accept_err_formats_message (private accept_err)
-//   - read_err_formats_message (private read_err)
-//   - callback_server_receives_valid_request (private accept_callback)
-//   - callback_server_bad_request_returns_error (private accept_callback)
-//   - run_callback_server_timeout_returns_error (pub(crate) run_callback_server_with_timeout)
-//
-// These tests must remain in the inline #[cfg(test)] module in callback.rs.
+#[tokio::test]
+async fn run_callback_server_receives_valid_request_with_extra_params() {
+    use mcp_gateway::adapters::driven::connectivity::oauth::callback::run_callback_server;
+    use tokio::io::AsyncWriteExt;
+
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+
+    let handle = tokio::spawn(async move { run_callback_server(port).await });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+        .await
+        .unwrap();
+    stream
+        .write_all(b"GET /?code=abc&state=xyz&extra=ignored HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .unwrap();
+
+    let result = handle.await.unwrap();
+    let params = result.unwrap();
+    assert_eq!(params.code, "abc");
+    assert_eq!(params.state, "xyz");
+}
+
+#[tokio::test]
+async fn run_callback_server_bad_request_returns_error() {
+    use mcp_gateway::adapters::driven::connectivity::oauth::callback::run_callback_server;
+    use tokio::io::AsyncWriteExt;
+
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+
+    let handle = tokio::spawn(async move { run_callback_server(port).await });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+        .await
+        .unwrap();
+    stream
+        .write_all(b"GET /no-params HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .unwrap();
+
+    let result = handle.await.unwrap();
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("missing code or state parameter"));
+}
 
 // -- service.rs tests --
-// NOTE: The service module is private (`mod service;` in oauth/mod.rs).
-// Only create_oauth_transport is re-exported as pub. The following functions
-// are private and their tests cannot be migrated:
-//   - resolve_credential_path
-//   - metadata_err
-//   - cred_store_err
-//   - auth_err
-//   - token_err
-//   - default_browser
-//   - browser_auth
-//   - run_authorization_flow
-//   - initialize_auth_manager
-//   - create_oauth_transport_with (pub(crate))
-//
-// Tests that CAN be migrated use only create_oauth_transport (the public wrapper):
 
 #[tokio::test]
 async fn create_oauth_transport_invalid_url_returns_error() {
@@ -388,7 +393,7 @@ async fn create_oauth_transport_completes_browser_auth_flow() {
 }
 
 #[tokio::test]
-async fn create_oauth_transport_with_register_client_flow() {
+async fn create_oauth_transport_register_client_flow() {
     use axum::extract::State;
     use axum::routing::{get, post};
     use axum::Json;
@@ -442,6 +447,22 @@ async fn create_oauth_transport_with_register_client_flow() {
     tokio::spawn(async move { axum::serve(listener, app).await.ok() });
 
     let dir = tempfile::tempdir().unwrap();
+    let script_path = dir.path().join("fake_browser.sh");
+    std::fs::write(
+        &script_path,
+        "#!/bin/sh\n\
+         STATE=$(echo \"$1\" | sed 's/.*state=//;s/&.*//')\n\
+         REDIR=$(echo \"$1\" | sed 's/.*redirect_uri=//;s/&.*//')\n\
+         REDIR=$(echo \"$REDIR\" | sed 's/%3A/:/g; s/%2F/\\//g')\n\
+         curl -s \"${REDIR}?code=test_code&state=${STATE}\" >/dev/null 2>&1\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::env::set_var("BROWSER", script_path.to_str().unwrap());
 
     let redirect_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let redirect_port = redirect_listener.local_addr().unwrap().port();
@@ -455,34 +476,12 @@ async fn create_oauth_transport_with_register_client_flow() {
         credentials_file: Some(dir.path().join("creds.json").to_string_lossy().to_string()),
     };
 
-    let result = create_oauth_transport_with(
-        &base_url,
-        &config,
-        "test",
-        HashMap::new(),
-        |auth_url, _listener| async move {
-            // Extract state from the authorization URL
-            let url = url::Url::parse(&auth_url).unwrap();
-            let state = url
-                .query_pairs()
-                .find(|(k, _)| k == "state")
-                .unwrap()
-                .1
-                .to_string();
-
-            Ok(CallbackParams {
-                code: "test_code".to_string(),
-                state,
-            })
-        },
-    )
-    .await;
-
+    let result = create_oauth_transport(&base_url, &config, "test", HashMap::new()).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
-async fn create_oauth_transport_with_bind_conflict_returns_error() {
+async fn create_oauth_transport_bind_conflict_returns_error() {
     use axum::extract::State;
     use axum::routing::{get, post};
     use axum::Json;
@@ -528,7 +527,7 @@ async fn create_oauth_transport_with_bind_conflict_returns_error() {
 
     let dir = tempfile::tempdir().unwrap();
 
-    // Bind the redirect port first so create_oauth_transport_with will fail
+    // Bind the redirect port first so create_oauth_transport will fail
     let blocker = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let redirect_port = blocker.local_addr().unwrap().port();
 
@@ -540,16 +539,8 @@ async fn create_oauth_transport_with_bind_conflict_returns_error() {
         credentials_file: Some(dir.path().join("creds.json").to_string_lossy().to_string()),
     };
 
-    let result = create_oauth_transport_with(
-        &base_url,
-        &config,
-        "test",
-        HashMap::new(),
-        |_auth_url, _listener| async move {
-            unreachable!("interactive callback should not be called when bind fails")
-        },
-    )
-    .await;
+    // Bind conflict happens before browser_auth is invoked — no BROWSER needed
+    let result = create_oauth_transport(&base_url, &config, "test", HashMap::new()).await;
 
     // Keep blocker alive to ensure port conflict
     drop(blocker);
@@ -563,7 +554,7 @@ async fn create_oauth_transport_with_bind_conflict_returns_error() {
 }
 
 #[tokio::test]
-async fn create_oauth_transport_with_stored_credentials_skips_auth_flow() {
+async fn create_oauth_transport_stored_credentials_skips_auth_flow() {
     use axum::extract::State;
     use axum::routing::{get, post};
     use axum::Json;
@@ -618,53 +609,51 @@ async fn create_oauth_transport_with_stored_credentials_skips_auth_flow() {
 
     let dir = tempfile::tempdir().unwrap();
     let creds_path = dir.path().join("creds.json");
+    let script_path = dir.path().join("fake_browser.sh");
+    std::fs::write(
+        &script_path,
+        "#!/bin/sh\n\
+         STATE=$(echo \"$1\" | sed 's/.*state=//;s/&.*//')\n\
+         REDIR=$(echo \"$1\" | sed 's/.*redirect_uri=//;s/&.*//')\n\
+         REDIR=$(echo \"$REDIR\" | sed 's/%3A/:/g; s/%2F/\\//g')\n\
+         curl -s \"${REDIR}?code=test_code&state=${STATE}\" >/dev/null 2>&1\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::env::set_var("BROWSER", script_path.to_str().unwrap());
 
     let redirect_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let redirect_port = redirect_listener.local_addr().unwrap().port();
     drop(redirect_listener);
 
     let config = OAuthConfig {
-        client_id: None,
+        client_id: Some("my-app".to_string()),
         client_secret: None,
         scopes: vec!["read".to_string()],
         redirect_port,
         credentials_file: Some(creds_path.to_string_lossy().to_string()),
     };
 
-    // First call: run the auth flow to store credentials
-    let result = create_oauth_transport_with(
-        &base_url,
-        &config,
-        "test",
-        HashMap::new(),
-        |auth_url, _listener| async move {
-            let url = url::Url::parse(&auth_url).unwrap();
-            let state = url
-                .query_pairs()
-                .find(|(k, _)| k == "state")
-                .unwrap()
-                .1
-                .to_string();
-            Ok(CallbackParams {
-                code: "test_code".to_string(),
-                state,
-            })
-        },
-    )
-    .await;
+    // First call: run the auth flow via browser script to store credentials
+    let result = create_oauth_transport(&base_url, &config, "test", HashMap::new()).await;
     assert!(result.is_ok());
     assert!(creds_path.exists());
 
-    // Second call: stored credentials should be found, auth flow skipped
-    let result = create_oauth_transport_with(
-        &base_url,
-        &config,
-        "test",
-        HashMap::new(),
-        |_auth_url, _listener| async move {
-            panic!("interactive callback should not be called when credentials are stored")
-        },
-    )
-    .await;
+    // Second call: stored credentials should be found, auth flow skipped.
+    // Use a BROWSER that would panic — it should never be invoked.
+    let fail_script = dir.path().join("fail_browser.sh");
+    std::fs::write(&fail_script, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fail_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::env::set_var("BROWSER", fail_script.to_str().unwrap());
+
+    let result = create_oauth_transport(&base_url, &config, "test", HashMap::new()).await;
     assert!(result.is_ok());
 }

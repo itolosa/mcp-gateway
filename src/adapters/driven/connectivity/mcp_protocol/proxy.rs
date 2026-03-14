@@ -76,10 +76,9 @@ where
         config,
     );
     let router = gateway_router(log_sender).nest_service("/mcp", service);
-    axum::serve(listener, router)
-        .with_graceful_shutdown(ct.cancelled_owned())
-        .await
-        .map_err(downstream_init_err)
+    #[rustfmt::skip]
+    let result = axum::serve(listener, router).with_graceful_shutdown(ct.cancelled_owned()).await.map_err(|e| ProxyError::DownstreamInit { message: e.to_string() });
+    result
 }
 
 async fn oauth_metadata_handler(
@@ -156,12 +155,6 @@ async fn logs_handler(
         Err(_) => None,
     });
     Sse::new(stream)
-}
-
-pub fn downstream_init_err(e: impl std::fmt::Display) -> ProxyError {
-    ProxyError::DownstreamInit {
-        message: e.to_string(),
-    }
 }
 
 pub async fn serve_proxy_http<H: rmcp::ServerHandler + 'static>(

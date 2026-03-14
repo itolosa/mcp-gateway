@@ -6,8 +6,8 @@ use mcp_gateway::adapters::driven::configuration::model::{HttpConfig, OAuthConfi
 use mcp_gateway::adapters::driven::connectivity::cli_execution::NullCliRunner;
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::proxy::{
-    create_http_transport, create_oauth_http_transport, downstream_init_err, gateway_router,
-    serve_proxy, serve_proxy_http, spawn_transport,
+    create_http_transport, create_oauth_http_transport, gateway_router, serve_proxy,
+    serve_proxy_http, spawn_transport,
 };
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, RmcpProviderClient};
 use mcp_gateway::adapters::driven::connectivity::oauth::OAuthError;
@@ -723,11 +723,4 @@ async fn logs_handler_skips_lagged_messages() {
     let text = String::from_utf8(bytes.to_vec()).unwrap();
     // At least the last message should be present; lagged ones are skipped
     assert!(text.contains("third"));
-}
-
-#[test]
-fn downstream_init_err_formats_message() {
-    let err = downstream_init_err("something broke");
-    assert!(matches!(err, ProxyError::DownstreamInit { .. }));
-    assert!(err.to_string().contains("something broke"));
 }

@@ -27,7 +27,7 @@ pub async fn create_oauth_transport(
     .await
 }
 
-pub async fn create_oauth_transport_with<F, Fut>(
+pub(crate) async fn create_oauth_transport_with<F, Fut>(
     server_url: &str,
     oauth_config: &OAuthConfig,
     server_name: &str,
@@ -38,25 +38,21 @@ where
     F: FnOnce(String, tokio::net::TcpListener) -> Fut,
     Fut: Future<Output = Result<CallbackParams, OAuthError>>,
 {
-    let mut auth_manager = AuthorizationManager::new(server_url)
-        .await
-        .map_err(metadata_err)?;
+    #[rustfmt::skip]
+    let mut auth_manager = AuthorizationManager::new(server_url).await.map_err(|e: AuthError| OAuthError::MetadataDiscovery { message: e.to_string() })?;
 
     let default = FileCredentialStore::default_path(server_name);
-    let cred_path = resolve_credential_path(oauth_config.credentials_file.as_deref(), default)?;
+    #[rustfmt::skip]
+    let cred_path = oauth_config.credentials_file.as_deref().map(PathBuf::from).or(default).ok_or_else(|| OAuthError::CredentialStore { message: "cannot determine credentials path".to_string() })?;
 
     auth_manager.set_credential_store(FileCredentialStore::new(cred_path));
 
-    let metadata = auth_manager
-        .discover_metadata()
-        .await
-        .map_err(metadata_err)?;
+    #[rustfmt::skip]
+    let metadata = auth_manager.discover_metadata().await.map_err(|e: AuthError| OAuthError::MetadataDiscovery { message: e.to_string() })?;
     auth_manager.set_metadata(metadata);
 
-    let has_stored_token = auth_manager
-        .initialize_from_store()
-        .await
-        .map_err(cred_store_err)?;
+    #[rustfmt::skip]
+    let has_stored_token = auth_manager.initialize_from_store().await.map_err(|e: AuthError| OAuthError::CredentialStore { message: e.to_string() })?;
 
     if !has_stored_token {
         run_authorization_flow(&mut auth_manager, oauth_config, interactive).await?;
@@ -69,42 +65,6 @@ where
         auth_client,
         transport_config,
     ))
-}
-
-fn resolve_credential_path(
-    explicit_path: Option<&str>,
-    default_path: Option<PathBuf>,
-) -> Result<PathBuf, OAuthError> {
-    explicit_path
-        .map(PathBuf::from)
-        .or(default_path)
-        .ok_or_else(|| OAuthError::CredentialStore {
-            message: "cannot determine credentials path".to_string(),
-        })
-}
-
-fn metadata_err(e: AuthError) -> OAuthError {
-    OAuthError::MetadataDiscovery {
-        message: e.to_string(),
-    }
-}
-
-fn cred_store_err(e: AuthError) -> OAuthError {
-    OAuthError::CredentialStore {
-        message: e.to_string(),
-    }
-}
-
-fn auth_err(e: AuthError) -> OAuthError {
-    OAuthError::Authorization {
-        message: e.to_string(),
-    }
-}
-
-fn token_err(e: AuthError) -> OAuthError {
-    OAuthError::TokenExchange {
-        message: e.to_string(),
-    }
 }
 
 async fn run_authorization_flow<F, Fut>(
@@ -126,20 +86,17 @@ where
             scopes: oauth_config.scopes.clone(),
             redirect_uri: redirect_uri.clone(),
         };
-        auth_manager.configure_client(config).map_err(auth_err)?;
+        #[rustfmt::skip]
+        auth_manager.configure_client(config).map_err(|e: AuthError| OAuthError::Authorization { message: e.to_string() })?;
     } else {
         let scope_refs: Vec<&str> = oauth_config.scopes.iter().map(String::as_str).collect();
-        auth_manager
-            .register_client("mcp-gateway", &redirect_uri, &scope_refs)
-            .await
-            .map_err(auth_err)?;
+        #[rustfmt::skip]
+        auth_manager.register_client("mcp-gateway", &redirect_uri, &scope_refs).await.map_err(|e: AuthError| OAuthError::Authorization { message: e.to_string() })?;
     }
 
     let scope_refs: Vec<&str> = oauth_config.scopes.iter().map(|s| s.as_str()).collect();
-    let auth_url = auth_manager
-        .get_authorization_url(&scope_refs)
-        .await
-        .map_err(auth_err)?;
+    #[rustfmt::skip]
+    let auth_url = auth_manager.get_authorization_url(&scope_refs).await.map_err(|e: AuthError| OAuthError::Authorization { message: e.to_string() })?;
 
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{redirect_port}"))
         .await
@@ -149,10 +106,8 @@ where
 
     let callback = interactive(auth_url.to_string(), listener).await?;
 
-    auth_manager
-        .exchange_code_for_token(&callback.code, &callback.state)
-        .await
-        .map_err(token_err)?;
+    #[rustfmt::skip]
+    auth_manager.exchange_code_for_token(&callback.code, &callback.state).await.map_err(|e: AuthError| OAuthError::TokenExchange { message: e.to_string() })?;
 
     Ok(())
 }

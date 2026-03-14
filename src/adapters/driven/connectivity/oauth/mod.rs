@@ -5,4 +5,4 @@ mod service;
 
 pub use credentials::FileCredentialStore;
 pub use error::OAuthError;
-pub use service::{create_oauth_transport, create_oauth_transport_with};
+pub use service::create_oauth_transport;

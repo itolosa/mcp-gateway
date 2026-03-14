@@ -12,16 +12,30 @@ pub struct InstanceInfo {
     pub port: Option<u16>,
 }
 
+/// Proxy trait that wraps home directory resolution.
+/// Production code uses `OsRunDirResolver`; tests inject mocks.
+pub trait RunDirResolver {
+    fn run_dir(&self) -> Option<PathBuf>;
+}
+
+pub struct OsRunDirResolver;
+
+impl RunDirResolver for OsRunDirResolver {
+    fn run_dir(&self) -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".mcp-gateway").join("run"))
+    }
+}
+
 pub fn default_run_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".mcp-gateway").join("run"))
+    OsRunDirResolver.run_dir()
 }
 
 pub fn ensure_run_dir() -> Result<PathBuf, DaemonError> {
-    ensure_run_dir_at(default_run_dir())
+    ensure_run_dir_from(&OsRunDirResolver)
 }
 
-pub fn ensure_run_dir_at(run_dir: Option<PathBuf>) -> Result<PathBuf, DaemonError> {
-    let dir = run_dir.ok_or_else(|| DaemonError::PidWrite {
+pub fn ensure_run_dir_from(resolver: &impl RunDirResolver) -> Result<PathBuf, DaemonError> {
+    let dir = resolver.run_dir().ok_or_else(|| DaemonError::PidWrite {
         message: "cannot determine home directory".to_string(),
     })?;
     std::fs::create_dir_all(&dir).map_err(|e| DaemonError::PidWrite {

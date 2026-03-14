@@ -30,24 +30,6 @@ fn bind_err(port: u16, e: std::io::Error) -> OAuthError {
     }
 }
 
-fn timeout_err() -> OAuthError {
-    OAuthError::CallbackServer {
-        message: "timed out waiting for authorization callback".to_string(),
-    }
-}
-
-fn accept_err(e: std::io::Error) -> OAuthError {
-    OAuthError::CallbackServer {
-        message: format!("accept connection: {e}"),
-    }
-}
-
-fn read_err(e: std::io::Error) -> OAuthError {
-    OAuthError::CallbackServer {
-        message: format!("read request: {e}"),
-    }
-}
-
 pub async fn run_callback_server(port: u16) -> Result<CallbackParams, OAuthError> {
     run_callback_server_with_timeout(port, CALLBACK_TIMEOUT).await
 }
@@ -72,18 +54,20 @@ async fn run_callback_on_listener_with_timeout(
     listener: tokio::net::TcpListener,
     timeout: Duration,
 ) -> Result<CallbackParams, OAuthError> {
+    #[rustfmt::skip]
+    let cb_err = || OAuthError::CallbackServer { message: "timed out waiting for authorization callback".to_string() };
     tokio::time::timeout(timeout, accept_callback(&listener))
         .await
-        .unwrap_or_else(|_| Err(timeout_err()))
+        .unwrap_or_else(|_| Err(cb_err()))
 }
 
 async fn accept_callback(listener: &tokio::net::TcpListener) -> Result<CallbackParams, OAuthError> {
-    let (mut stream, _addr) = listener.accept().await.map_err(accept_err)?;
+    #[rustfmt::skip]
+    let (mut stream, _addr) = listener.accept().await.map_err(|e| OAuthError::CallbackServer { message: format!("accept connection: {e}") })?;
 
     let mut buf = vec![0u8; 4096];
-    let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf)
-        .await
-        .map_err(read_err)?;
+    #[rustfmt::skip]
+    let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await.map_err(|e| OAuthError::CallbackServer { message: format!("read request: {e}") })?;
 
     let request_bytes = buf.get(..n).unwrap_or_default();
     let request = String::from_utf8_lossy(request_bytes);

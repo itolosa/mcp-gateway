@@ -410,20 +410,6 @@ mod pid {
     }
 
     #[test]
-    fn ensure_run_dir_at_returns_error_when_none() {
-        let result = ensure_run_dir_at(None);
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("cannot determine home directory"));
-    }
-
-    #[test]
-    fn ensure_run_dir_at_returns_error_when_create_fails() {
-        let result = ensure_run_dir_at(Some(PathBuf::from("/dev/null/impossible/path")));
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("cannot create run directory"));
-    }
-
-    #[test]
     fn stop_instance_exercises_wait_loop_for_slow_dying_process() {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path();
@@ -497,6 +483,34 @@ mod pid {
             },
         );
         assert!(matches!(result, Err(DaemonError::PidWrite { .. })));
+    }
+
+    struct NullResolver;
+    impl RunDirResolver for NullResolver {
+        fn run_dir(&self) -> Option<PathBuf> {
+            None
+        }
+    }
+
+    #[test]
+    fn ensure_run_dir_from_returns_error_when_resolver_returns_none() {
+        let result = ensure_run_dir_from(&NullResolver);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot determine home directory"));
+    }
+
+    struct BadPathResolver;
+    impl RunDirResolver for BadPathResolver {
+        fn run_dir(&self) -> Option<PathBuf> {
+            Some(PathBuf::from("/dev/null/impossible/path"))
+        }
+    }
+
+    #[test]
+    fn ensure_run_dir_from_returns_error_when_create_fails() {
+        let result = ensure_run_dir_from(&BadPathResolver);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot create run directory"));
     }
 }
 
