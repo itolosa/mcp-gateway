@@ -7,9 +7,7 @@
 
 mod common;
 
-mod hexagon_test {
-    pub mod gateway;
-    pub mod mapping;
-    pub mod policy;
-    pub mod registry;
+mod hexagon {
+    pub mod entities;
+    pub mod usecases;
 }

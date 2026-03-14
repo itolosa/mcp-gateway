@@ -8,10 +8,7 @@
 
 mod common;
 
-mod adapters_driven_test {
-    pub mod cli_execution;
-    pub mod configuration;
-    pub mod mcp_protocol;
-    pub mod oauth;
-    pub mod storage;
+mod adapters {
+    pub mod driven;
+    pub mod driving;
 }
