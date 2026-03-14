@@ -32,7 +32,7 @@ use mcp_gateway::adapters::driving::ui::runner::{
     run_add, run_allowlist_add, run_allowlist_remove, run_allowlist_show, run_denylist_add,
     run_denylist_remove, run_denylist_show, run_list, run_remove, run_rules, run_run, run_tools,
 };
-use mcp_gateway::hexagon::ports::ProviderConfigStore;
+use mcp_gateway::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
 use mcp_gateway::hexagon::usecases::gateway::{
     create_policy, DefaultPolicy, Gateway, ProviderHandle,
 };

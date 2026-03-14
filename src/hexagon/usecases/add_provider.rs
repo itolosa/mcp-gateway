@@ -1,4 +1,4 @@
-use crate::hexagon::ports::ProviderConfigStore;
+use crate::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
 use crate::hexagon::usecases::registry_error::RegistryError;
 
 pub(crate) struct AddProvider;

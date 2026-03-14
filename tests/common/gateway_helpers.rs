@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 
-use mcp_gateway::hexagon::ports::{
-    CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
-    OperationDescriptor, PromptDescriptor, PromptGetRequest, PromptGetResult, ProviderClient,
-    ProviderError, ResourceDescriptor, ResourceReadRequest, ResourceReadResult,
-    ResourceTemplateDescriptor,
+use mcp_gateway::hexagon::ports::driven::cli_operation_runner::{
+    self as cli_port, CliOperationError, CliOperationRunner,
+};
+use mcp_gateway::hexagon::ports::driven::provider_client::{
+    OperationCallRequest, OperationCallResult, OperationDescriptor, PromptDescriptor,
+    PromptGetRequest, PromptGetResult, ProviderClient, ProviderError, ResourceDescriptor,
+    ResourceReadRequest, ResourceReadResult, ResourceTemplateDescriptor,
 };
 use mcp_gateway::hexagon::usecases::gateway::{
     create_policy, DefaultPolicy, Gateway, ProviderHandle,
@@ -357,8 +359,8 @@ impl ProviderClient for TestProvider {
 pub struct MockCliRunner;
 
 impl CliOperationRunner for MockCliRunner {
-    fn list_operations(&self) -> Vec<OperationDescriptor> {
-        vec![OperationDescriptor {
+    fn list_operations(&self) -> Vec<cli_port::OperationDescriptor> {
+        vec![cli_port::OperationDescriptor {
             name: "cli-cat".to_string(),
             description: Some("Cat stdin to stdout".to_string()),
             schema: r#"{"type":"object"}"#.to_string(),
@@ -371,9 +373,9 @@ impl CliOperationRunner for MockCliRunner {
 
     async fn call_operation(
         &self,
-        _request: &OperationCallRequest,
-    ) -> Result<OperationCallResult, GatewayError> {
-        Ok(OperationCallResult {
+        _request: &cli_port::OperationCallRequest,
+    ) -> Result<cli_port::OperationCallResult, CliOperationError> {
+        Ok(cli_port::OperationCallResult {
             content: vec!["cli-cat output".to_string()],
             is_error: false,
         })

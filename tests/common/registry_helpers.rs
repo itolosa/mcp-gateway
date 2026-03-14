@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use mcp_gateway::adapters::driven::configuration::model::{
     HttpConfig, McpServerEntry, StdioConfig,
 };
-use mcp_gateway::hexagon::ports::ProviderConfigStore;
+use mcp_gateway::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
 
 pub struct FakeConfigStore {
     entries: Mutex<BTreeMap<String, McpServerEntry>>,

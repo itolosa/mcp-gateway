@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::hexagon::ports::{
-    GatewayError, OperationPolicy, ProviderClient, ResourceDescriptor, ResourceTemplateDescriptor,
+use crate::hexagon::ports::driven::operation_policy::OperationPolicy;
+use crate::hexagon::ports::driven::provider_client::ProviderClient;
+use crate::hexagon::ports::driving::list_resources::{
+    ResourceDescriptor, ResourceTemplateDescriptor,
 };
 use crate::hexagon::usecases::mapping::{encode, update_json_field};
 
@@ -12,7 +14,7 @@ pub(crate) struct ListResources;
 impl ListResources {
     pub(crate) async fn execute<U: ProviderClient, F: OperationPolicy>(
         providers: &BTreeMap<String, ProviderHandle<U, F>>,
-    ) -> Result<Vec<ResourceDescriptor>, GatewayError> {
+    ) -> Result<Vec<ResourceDescriptor>, std::convert::Infallible> {
         let mut all = Vec::new();
         for (name, entry) in providers {
             let resources = match entry.client.list_resources().await {
@@ -44,7 +46,7 @@ pub(crate) struct ListResourceTemplates;
 impl ListResourceTemplates {
     pub(crate) async fn execute<U: ProviderClient, F: OperationPolicy>(
         providers: &BTreeMap<String, ProviderHandle<U, F>>,
-    ) -> Result<Vec<ResourceTemplateDescriptor>, GatewayError> {
+    ) -> Result<Vec<ResourceTemplateDescriptor>, std::convert::Infallible> {
         let mut all = Vec::new();
         for (name, entry) in providers {
             let templates = match entry.client.list_resource_templates().await {

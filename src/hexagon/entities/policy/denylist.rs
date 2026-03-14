@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::hexagon::ports::OperationPolicy;
+use crate::hexagon::ports::driven::operation_policy::OperationPolicy;
 
 pub struct DenylistPolicy {
     denied: HashSet<String>,

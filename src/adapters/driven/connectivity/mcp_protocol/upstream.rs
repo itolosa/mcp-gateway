@@ -4,7 +4,7 @@ use std::time::Duration;
 use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
 use rmcp::service::{RoleClient, RunningService};
 
-use crate::hexagon::ports::{
+use crate::hexagon::ports::driven::provider_client::{
     OperationCallRequest, OperationCallResult, OperationDescriptor, PromptDescriptor,
     PromptGetRequest, PromptGetResult, ProviderClient, ProviderError, ResourceDescriptor,
     ResourceReadRequest, ResourceReadResult, ResourceTemplateDescriptor,

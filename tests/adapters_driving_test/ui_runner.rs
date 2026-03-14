@@ -11,7 +11,8 @@ use mcp_gateway::adapters::driving::ui::command::{
     RemoveArgs, RulesArgs, TransportType,
 };
 use mcp_gateway::adapters::driving::ui::runner::*;
-use mcp_gateway::hexagon::ports::{OperationDescriptor, ProviderConfigStore};
+use mcp_gateway::hexagon::ports::driven::provider_client::OperationDescriptor;
+use mcp_gateway::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
 use mcp_gateway::hexagon::usecases::gateway::{create_policy, DefaultPolicy, ProviderHandle};
 use mcp_gateway::hexagon::usecases::registry_error::RegistryError;
 use mcp_gateway::hexagon::usecases::registry_service::RegistryService;

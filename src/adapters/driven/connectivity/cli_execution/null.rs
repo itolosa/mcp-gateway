@@ -1,5 +1,5 @@
-use crate::hexagon::ports::{
-    CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
+use crate::hexagon::ports::driven::cli_operation_runner::{
+    CliOperationError, CliOperationRunner, OperationCallRequest, OperationCallResult,
     OperationDescriptor,
 };
 
@@ -18,8 +18,8 @@ impl CliOperationRunner for NullCliRunner {
     async fn call_operation(
         &self,
         request: &OperationCallRequest,
-    ) -> Result<OperationCallResult, GatewayError> {
-        Err(GatewayError::CliOperation(format!(
+    ) -> Result<OperationCallResult, CliOperationError> {
+        Err(CliOperationError::Execution(format!(
             "unknown operation: {}",
             request.name
         )))

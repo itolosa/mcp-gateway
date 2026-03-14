@@ -10,7 +10,9 @@ use crate::adapters::driven::configuration::model::{
     CliOperationDef, HttpConfig, McpServerEntry, StdioConfig,
 };
 use crate::adapters::driven::connectivity::mcp_protocol::error::ProxyError;
-use crate::hexagon::ports::{OperationPolicy, ProviderClient, ProviderConfigStore};
+use crate::hexagon::ports::driven::operation_policy::OperationPolicy;
+use crate::hexagon::ports::driven::provider_client::ProviderClient;
+use crate::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
 use crate::hexagon::usecases::gateway::ProviderHandle;
 use crate::hexagon::usecases::registry_error::RegistryError;
 use crate::hexagon::usecases::registry_service::RegistryService;

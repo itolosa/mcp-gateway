@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use tokio::io::AsyncWriteExt;
 
 use crate::adapters::driven::configuration::model::CliOperationDef;
-use crate::hexagon::ports::{
-    CliOperationRunner, GatewayError, OperationCallRequest, OperationCallResult,
+use crate::hexagon::ports::driven::cli_operation_runner::{
+    CliOperationError, CliOperationRunner, OperationCallRequest, OperationCallResult,
     OperationDescriptor,
 };
 
@@ -33,17 +33,16 @@ impl CliOperationRunner for ProcessCliRunner {
     async fn call_operation(
         &self,
         request: &OperationCallRequest,
-    ) -> Result<OperationCallResult, GatewayError> {
+    ) -> Result<OperationCallResult, CliOperationError> {
         let name = &request.name;
-        let def = self
-            .tools
-            .get(name.as_str())
-            .ok_or_else(|| GatewayError::CliOperation(format!("unknown CLI operation: {name}")))?;
+        let def = self.tools.get(name.as_str()).ok_or_else(|| {
+            CliOperationError::Execution(format!("unknown CLI operation: {name}"))
+        })?;
 
         let input_json = request.arguments.as_deref().unwrap_or("{}");
 
         let output = run_command(&def.command, input_json).await.map_err(|e| {
-            GatewayError::CliOperation(format!("failed to run '{}': {e}", def.command))
+            CliOperationError::Execution(format!("failed to run '{}': {e}", def.command))
         })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();

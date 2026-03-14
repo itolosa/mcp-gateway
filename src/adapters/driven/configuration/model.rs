@@ -129,7 +129,7 @@ fn default_redirect_port() -> u16 {
     9876
 }
 
-impl crate::hexagon::ports::ProviderEntry for McpServerEntry {
+impl crate::hexagon::ports::driven::provider_entry::ProviderEntry for McpServerEntry {
     fn allowed_operations(&self) -> &[String] {
         McpServerEntry::allowed_operations(self)
     }

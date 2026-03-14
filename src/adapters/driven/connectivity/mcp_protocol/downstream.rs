@@ -6,10 +6,12 @@ use rmcp::model::{
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler};
 
-use crate::hexagon::ports::{
-    CliOperationRunner, GatewayError, OperationCallRequest, OperationPolicy, PromptGetRequest,
-    ProviderClient, ResourceReadRequest,
-};
+use crate::hexagon::ports::driven::cli_operation_runner::CliOperationRunner;
+use crate::hexagon::ports::driven::operation_policy::OperationPolicy;
+use crate::hexagon::ports::driven::provider_client::ProviderClient;
+use crate::hexagon::ports::driving::get_prompt::{GetPromptError, PromptGetRequest};
+use crate::hexagon::ports::driving::read_resource::{ReadResourceError, ResourceReadRequest};
+use crate::hexagon::ports::driving::route_operation::{OperationCallRequest, RouteOperationError};
 use crate::hexagon::usecases::gateway::Gateway;
 
 pub struct McpAdapter<U: ProviderClient, C: CliOperationRunner, F: OperationPolicy> {
@@ -22,14 +24,34 @@ impl<U: ProviderClient, C: CliOperationRunner, F: OperationPolicy> McpAdapter<U,
     }
 }
 
-fn gateway_error_to_mcp(err: GatewayError) -> ErrorData {
+fn route_error_to_mcp(err: RouteOperationError) -> ErrorData {
     match err {
-        GatewayError::InvalidMapping { .. }
-        | GatewayError::UnknownProvider { .. }
-        | GatewayError::OperationNotAllowed { .. } => {
+        RouteOperationError::InvalidMapping { .. }
+        | RouteOperationError::UnknownProvider { .. }
+        | RouteOperationError::OperationNotAllowed { .. } => {
             ErrorData::invalid_params(err.to_string(), None)
         }
-        _ => ErrorData::internal_error(err.to_string(), None),
+        RouteOperationError::Provider(_) | RouteOperationError::CliOperation(_) => {
+            ErrorData::internal_error(err.to_string(), None)
+        }
+    }
+}
+
+fn read_resource_error_to_mcp(err: ReadResourceError) -> ErrorData {
+    match err {
+        ReadResourceError::InvalidMapping { .. } | ReadResourceError::UnknownProvider { .. } => {
+            ErrorData::invalid_params(err.to_string(), None)
+        }
+        ReadResourceError::Provider(_) => ErrorData::internal_error(err.to_string(), None),
+    }
+}
+
+fn get_prompt_error_to_mcp(err: GetPromptError) -> ErrorData {
+    match err {
+        GetPromptError::InvalidMapping { .. } | GetPromptError::UnknownProvider { .. } => {
+            ErrorData::invalid_params(err.to_string(), None)
+        }
+        GetPromptError::Provider(_) => ErrorData::internal_error(err.to_string(), None),
     }
 }
 
@@ -69,7 +91,7 @@ impl<
             .gateway
             .list_operations()
             .await
-            .map_err(gateway_error_to_mcp)?;
+            .map_err(|e| match e {})?;
         let mcp_tools = tools
             .into_iter()
             .map(|t| {
@@ -100,7 +122,7 @@ impl<
             .gateway
             .route_operation(domain_request)
             .await
-            .map_err(gateway_error_to_mcp)?;
+            .map_err(route_error_to_mcp)?;
         let content = domain_content_to_mcp(result.content);
         if result.is_error {
             Ok(CallToolResult::error(content))
@@ -118,7 +140,7 @@ impl<
             .gateway
             .list_resources()
             .await
-            .map_err(gateway_error_to_mcp)?;
+            .map_err(|e| match e {})?;
         let mcp_resources = resources
             .into_iter()
             .filter_map(|r| serde_json::from_str(&r.json).ok())
@@ -139,7 +161,7 @@ impl<
             .gateway
             .list_resource_templates()
             .await
-            .map_err(gateway_error_to_mcp)?;
+            .map_err(|e| match e {})?;
         let mcp_templates = templates
             .into_iter()
             .filter_map(|t| serde_json::from_str(&t.json).ok())
@@ -163,7 +185,7 @@ impl<
             .gateway
             .read_resource(domain_request)
             .await
-            .map_err(gateway_error_to_mcp)?;
+            .map_err(read_resource_error_to_mcp)?;
         serde_json::from_str(&result.json)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))
     }
@@ -173,11 +195,7 @@ impl<
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, ErrorData> {
-        let prompts = self
-            .gateway
-            .list_prompts()
-            .await
-            .map_err(gateway_error_to_mcp)?;
+        let prompts = self.gateway.list_prompts().await.map_err(|e| match e {})?;
         let mcp_prompts = prompts
             .into_iter()
             .filter_map(|p| serde_json::from_str(&p.json).ok())
@@ -204,7 +222,7 @@ impl<
             .gateway
             .get_prompt(domain_request)
             .await
-            .map_err(gateway_error_to_mcp)?;
+            .map_err(get_prompt_error_to_mcp)?;
         serde_json::from_str(&result.json)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))
     }

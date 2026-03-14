@@ -6,7 +6,7 @@ use mcp_gateway::adapters::driven::configuration::model::{
     GatewayConfig, McpServerEntry, StdioConfig,
 };
 use mcp_gateway::adapters::driven::storage::{ConfigStore, FileConfigStore};
-use mcp_gateway::hexagon::ports::ProviderConfigStore;
+use mcp_gateway::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
 
 #[test]
 fn load_missing_file_returns_default() {

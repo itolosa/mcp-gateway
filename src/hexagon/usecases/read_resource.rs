@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::hexagon::ports::{
-    GatewayError, OperationPolicy, ProviderClient, ProviderError, ResourceReadRequest,
-    ResourceReadResult,
+use crate::hexagon::ports::driven::operation_policy::OperationPolicy;
+use crate::hexagon::ports::driven::provider_client::{self, ProviderClient, ProviderError};
+use crate::hexagon::ports::driving::read_resource::{
+    ReadResourceError, ResourceReadRequest, ResourceReadResult,
 };
 use crate::hexagon::usecases::mapping::decode;
 
@@ -14,24 +15,26 @@ impl ReadResource {
     pub(crate) async fn execute<U: ProviderClient, F: OperationPolicy>(
         providers: &BTreeMap<String, ProviderHandle<U, F>>,
         request: ResourceReadRequest,
-    ) -> Result<ResourceReadResult, GatewayError> {
+    ) -> Result<ResourceReadResult, ReadResourceError> {
         let (provider_name, raw_uri) =
-            decode(&request.uri).ok_or_else(|| GatewayError::InvalidMapping {
+            decode(&request.uri).ok_or_else(|| ReadResourceError::InvalidMapping {
                 operation: request.uri.clone(),
             })?;
-        let entry = providers
-            .get(provider_name)
-            .ok_or_else(|| GatewayError::UnknownProvider {
-                provider: provider_name.to_string(),
-                operation: request.uri.clone(),
-            })?;
-        let provider_request = ResourceReadRequest {
+        let entry =
+            providers
+                .get(provider_name)
+                .ok_or_else(|| ReadResourceError::UnknownProvider {
+                    provider: provider_name.to_string(),
+                    operation: request.uri.clone(),
+                })?;
+        let provider_request = provider_client::ResourceReadRequest {
             uri: raw_uri.to_string(),
         };
         entry
             .client
             .read_resource(provider_request)
             .await
-            .map_err(|e: ProviderError| GatewayError::Provider(e.to_string()))
+            .map(|r| ResourceReadResult { json: r.json })
+            .map_err(|e: ProviderError| ReadResourceError::Provider(e.to_string()))
     }
 }

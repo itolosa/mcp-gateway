@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 
 use mcp_gateway::adapters::driven::connectivity::cli_execution::NullCliRunner;
-use mcp_gateway::hexagon::ports::{
-    OperationCallRequest, PromptDescriptor, PromptGetRequest, ResourceDescriptor,
-    ResourceReadRequest, ResourceTemplateDescriptor,
+use mcp_gateway::hexagon::ports::driven::provider_client::{
+    PromptDescriptor, ResourceDescriptor, ResourceTemplateDescriptor,
 };
+use mcp_gateway::hexagon::ports::driving::get_prompt::PromptGetRequest;
+use mcp_gateway::hexagon::ports::driving::read_resource::ResourceReadRequest;
+use mcp_gateway::hexagon::ports::driving::route_operation::OperationCallRequest;
 use mcp_gateway::hexagon::usecases::gateway::{
     create_policy, DefaultPolicy, Gateway, ProviderHandle,
 };

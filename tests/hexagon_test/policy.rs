@@ -1,4 +1,4 @@
-use mcp_gateway::hexagon::ports::OperationPolicy;
+use mcp_gateway::hexagon::ports::driven::operation_policy::OperationPolicy;
 use mcp_gateway::hexagon::usecases::gateway::create_policy;
 
 // ---------------------------------------------------------------------------

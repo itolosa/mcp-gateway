@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::driven::configuration::error::ConfigError;
 use crate::adapters::driven::configuration::model::{GatewayConfig, McpServerEntry};
-use crate::hexagon::ports::ProviderConfigStore;
+use crate::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
 
 pub trait ConfigStore {
     fn load(&self) -> Result<GatewayConfig, ConfigError>;

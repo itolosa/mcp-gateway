@@ -1,4 +1,4 @@
-use crate::hexagon::ports::OperationPolicy;
+use crate::hexagon::ports::driven::operation_policy::OperationPolicy;
 
 pub struct CompoundPolicy<A: OperationPolicy, D: OperationPolicy> {
     allow: A,

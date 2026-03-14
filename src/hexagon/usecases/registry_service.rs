@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::hexagon::ports::ProviderConfigStore;
+use crate::hexagon::ports::driven::provider_config_store::ProviderConfigStore;
+use crate::hexagon::ports::driven::provider_entry::ProviderEntry;
 use crate::hexagon::usecases::registry_error::RegistryError;
 
 use super::add_allowed_operations::AddAllowedOperations;
@@ -17,7 +18,10 @@ pub struct RegistryService<S: ProviderConfigStore> {
     store: S,
 }
 
-impl<S: ProviderConfigStore> RegistryService<S> {
+impl<S: ProviderConfigStore> RegistryService<S>
+where
+    S::Entry: ProviderEntry,
+{
     pub fn new(store: S) -> Self {
         Self { store }
     }
