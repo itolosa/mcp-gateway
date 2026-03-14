@@ -11,7 +11,6 @@ use mcp_gateway::adapters::driven::connectivity::mcp_protocol::proxy::{
 };
 use mcp_gateway::adapters::driven::connectivity::mcp_protocol::{McpAdapter, RmcpProviderClient};
 use mcp_gateway::adapters::driven::connectivity::oauth::OAuthError;
-use mcp_gateway::hexagon::ports::GatewayError;
 use mcp_gateway::hexagon::usecases::gateway::{
     create_policy, DefaultPolicy, Gateway, ProviderHandle,
 };
@@ -22,48 +21,122 @@ use rmcp::ServiceExt;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-// -- downstream.rs tests (gateway_error_to_mcp and domain_content_to_mcp) --
-// NOTE: gateway_error_to_mcp and domain_content_to_mcp are private functions.
-// We test the same behavior through the McpAdapter's ServerHandler methods
-// or by constructing the errors directly and checking the public interface.
-// The tests below replicate the original behavior by testing the error mapping
-// indirectly through the public GatewayError variants.
+// -- downstream.rs tests (gateway_error_to_mcp via MCP transport) --
 
-#[test]
-fn invalid_mapping_is_invalid_params_variant() {
-    let err = GatewayError::InvalidMapping {
-        operation: "t".to_string(),
+use crate::common::gateway_helpers::MockServerA;
+
+fn mcp_error_code(err: rmcp::service::ServiceError) -> ErrorCode {
+    match err {
+        rmcp::service::ServiceError::McpError(e) => e.code,
+        other => panic!("expected McpError, got: {other}"),
+    }
+}
+
+async fn connect_mcp_client(port: u16) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let url: Arc<str> = format!("http://127.0.0.1:{port}/mcp").into();
+    let config =
+        rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(url);
+    let transport = rmcp::transport::StreamableHttpClientTransport::from_config(config);
+    ().serve(transport).await.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn call_tool_invalid_mapping_returns_invalid_params() {
+    let adapter = empty_adapter();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let ct = CancellationToken::new();
+    let ct2 = ct.clone();
+    let sender = dummy_log_sender();
+    tokio::spawn(async move { serve_proxy_http(adapter, port, ct2, sender).await });
+    drop(listener);
+
+    let client = connect_mcp_client(port).await;
+    let request = CallToolRequestParams::new("no_prefix");
+    let err = client.call_tool(request).await.unwrap_err();
+    assert_eq!(mcp_error_code(err), ErrorCode::INVALID_PARAMS);
+    drop(client);
+    ct.cancel();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn call_tool_unknown_provider_returns_invalid_params() {
+    let adapter = empty_adapter();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let ct = CancellationToken::new();
+    let ct2 = ct.clone();
+    let sender = dummy_log_sender();
+    tokio::spawn(async move { serve_proxy_http(adapter, port, ct2, sender).await });
+    drop(listener);
+
+    let client = connect_mcp_client(port).await;
+    let request = CallToolRequestParams::new("nonexistent__tool");
+    let err = client.call_tool(request).await.unwrap_err();
+    assert_eq!(mcp_error_code(err), ErrorCode::INVALID_PARAMS);
+    drop(client);
+    ct.cancel();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn call_tool_operation_not_allowed_returns_invalid_params() {
+    let filter = create_policy(vec![], vec!["echo".to_string()]);
+    let handle = ProviderHandle {
+        client: MockServerA,
+        filter,
     };
-    assert!(err.to_string().contains("prefix"));
+    let providers = BTreeMap::from([("srv".to_string(), handle)]);
+    let gateway = Gateway::new(providers, NullCliRunner);
+    let adapter = Arc::new(McpAdapter::new(gateway));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let ct = CancellationToken::new();
+    let ct2 = ct.clone();
+    let sender = dummy_log_sender();
+    tokio::spawn(async move { serve_proxy_http(adapter, port, ct2, sender).await });
+    drop(listener);
+
+    let client = connect_mcp_client(port).await;
+    let request = CallToolRequestParams::new("srv__echo");
+    let err = client.call_tool(request).await.unwrap_err();
+    assert_eq!(mcp_error_code(err), ErrorCode::INVALID_PARAMS);
+    drop(client);
+    ct.cancel();
 }
 
-#[test]
-fn unknown_provider_is_invalid_params_variant() {
-    let err = GatewayError::UnknownProvider {
-        provider: "s".to_string(),
-        operation: "t".to_string(),
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn call_tool_provider_error_returns_internal_error() {
+    let filter = passthrough_filter();
+    let handle = ProviderHandle {
+        client: MockServerA,
+        filter,
     };
-    assert!(err.to_string().contains("unknown provider"));
-}
+    let providers = BTreeMap::from([("srv".to_string(), handle)]);
+    let gateway = Gateway::new(providers, NullCliRunner);
+    let adapter = Arc::new(McpAdapter::new(gateway));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let ct = CancellationToken::new();
+    let ct2 = ct.clone();
+    let sender = dummy_log_sender();
+    tokio::spawn(async move { serve_proxy_http(adapter, port, ct2, sender).await });
+    drop(listener);
 
-#[test]
-fn operation_not_allowed_is_invalid_params_variant() {
-    let err = GatewayError::OperationNotAllowed {
-        operation: "t".to_string(),
-    };
-    assert!(err.to_string().contains("not allowed"));
-}
-
-#[test]
-fn provider_error_is_internal_variant() {
-    let err = GatewayError::Provider("fail".to_string());
-    assert!(err.to_string().contains("fail"));
-}
-
-#[test]
-fn cli_operation_error_is_internal_variant() {
-    let err = GatewayError::CliOperation("fail".to_string());
-    assert!(err.to_string().contains("fail"));
+    let client = connect_mcp_client(port).await;
+    let request = CallToolRequestParams::new("srv__nonexistent");
+    let err = client.call_tool(request).await.unwrap_err();
+    assert_eq!(mcp_error_code(err), ErrorCode::INTERNAL_ERROR);
+    drop(client);
+    ct.cancel();
 }
 
 // -- error.rs tests (ProxyError) --
