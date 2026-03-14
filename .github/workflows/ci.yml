@@ -37,7 +37,7 @@ jobs:
         with:
           components: clippy, rustfmt, llvm-tools-preview
 
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@c1305996457413b456b636a549d9f98354fd89cf # cargo-llvm-cov
